@@ -27,6 +27,7 @@ from hermes.agent.state import (
 )
 from hermes.llm.provider import get_provider
 from hermes.tools.executor import format_result_for_llm
+from hermes.tools.stats import analyze_query_result, StatResult as _StatResult
 
 MAX_ITER = int(__import__("os").getenv("HERMES_MAX_ITER", "6"))
 
@@ -98,7 +99,6 @@ def plan_and_execute(state: AgentState, conn: "DatabaseConnection") -> dict[str,
 
             retry = conn.execute(h.id, fix.fixed_sql)
 
-            # Record the pitfall regardless of whether the retry succeeded
             new_pitfalls.append(Pitfall(
                 original_sql=sql,
                 error=result.error,
@@ -107,10 +107,10 @@ def plan_and_execute(state: AgentState, conn: "DatabaseConnection") -> dict[str,
                 data_quality_issue=fix.data_quality_issue,
             ))
 
-            # Use the retried result (even if it also errored — at least we tried)
-            results.append(retry)
-        else:
+            result = _attach_stats(retry)
             results.append(result)
+        else:
+            results.append(_attach_stats(result))
 
     return {
         "query_history": results,   # operator.add appends
@@ -244,6 +244,27 @@ def _format_full_evidence(history: list[QueryResult]) -> str:
     if not history:
         return "No queries were executed."
     return "\n\n---\n\n".join(format_result_for_llm(r) for r in history)
+
+
+def _attach_stats(result: QueryResult) -> QueryResult:
+    """Run statistical analysis on a successful query result and attach findings."""
+    if result.error or not result.rows:
+        return result
+    try:
+        stat_results = analyze_query_result(result.columns, result.rows)
+        if stat_results:
+            from hermes.agent.state import StatResult
+            result = QueryResult(
+                **{
+                    **result.model_dump(),
+                    "stats": [
+                        StatResult(**s.__dict__) for s in stat_results
+                    ],
+                }
+            )
+    except Exception:
+        pass  # stats are best-effort — never block the investigation
+    return result
 
 
 def _format_pitfalls_for_synthesis(pitfalls: list[Pitfall]) -> str:

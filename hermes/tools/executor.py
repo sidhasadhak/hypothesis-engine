@@ -105,6 +105,16 @@ def format_result_for_llm(result: QueryResult, max_rows: int = 30) -> str:
             lines.append(" | ".join(str(v) for v in row))
         if result.row_count > max_rows:
             lines.append(f"... ({result.row_count - max_rows} more rows)")
+
+    # Append statistical findings so the LLM can cite them in evidence scoring
+    if result.stats:
+        lines.append("")
+        lines.append("STATISTICAL ANALYSIS:")
+        for s in result.stats:
+            sig_marker = "⚠ SIGNIFICANT" if s.is_significant else "—"
+            sigma_str = f" [{s.sigma:.1f}σ]" if s.sigma is not None else ""
+            lines.append(f"  {sig_marker}{sigma_str} {s.interpretation}")
+
     return "\n".join(lines)
 
 

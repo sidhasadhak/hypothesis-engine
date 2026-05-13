@@ -108,11 +108,14 @@ async def _stream_investigation(question: str, connection_id: str) -> AsyncGener
                 recent = history[-3:]
                 pitfalls = merged.get("pitfalls", [])
                 new_pitfalls = pitfalls[-(len(recent)):] if pitfalls else []
+                # Collect all StatResults from recent queries
+                all_stats = [s.model_dump() for r in recent for s in (r.stats or [])]
                 yield _sse("queries_executed", {
                     "iteration": merged.get("iteration", 0),
                     "hypothesis_idx": merged.get("current_hypothesis_idx", 0),
-                    "queries": [{"sql": r.sql, "row_count": r.row_count, "error": r.error} for r in recent],
+                    "queries": [{"sql": r.sql, "row_count": r.row_count, "error": r.error, "stats": [s.model_dump() for s in (r.stats or [])]} for r in recent],
                     "corrections": [p.model_dump() for p in new_pitfalls],
+                    "stats": all_stats,
                 })
 
             elif node_name == "score_evidence":

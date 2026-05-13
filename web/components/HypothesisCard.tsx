@@ -2,7 +2,7 @@
 
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import type { Hypothesis } from "@/lib/types";
+import type { Hypothesis, StatResult } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const VERDICT_STYLES: Record<string, { badge: string; bar: string }> = {
@@ -15,11 +15,17 @@ const VERDICT_STYLES: Record<string, { badge: string; bar: string }> = {
 interface Props {
   hypothesis: Hypothesis;
   index: number;
+  stats?: StatResult[];
 }
 
-export function HypothesisCard({ hypothesis, index }: Props) {
+export function HypothesisCard({ hypothesis, index, stats = [] }: Props) {
   const styles = VERDICT_STYLES[hypothesis.verdict] ?? VERDICT_STYLES.untested;
   const pct = Math.round(hypothesis.confidence * 100);
+
+  // Pick the most extreme significant σ to show as a badge
+  const topStat = stats
+    .filter(s => s.is_significant && s.sigma != null)
+    .sort((a, b) => (b.sigma ?? 0) - (a.sigma ?? 0))[0];
 
   return (
     <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-4 space-y-3 transition-all duration-500">
@@ -28,12 +34,23 @@ export function HypothesisCard({ hypothesis, index }: Props) {
           <span className="mt-0.5 shrink-0 text-xs font-mono text-zinc-500">H{index + 1}</span>
           <p className="text-sm text-zinc-200 leading-snug">{hypothesis.description}</p>
         </div>
-        <Badge
-          variant="outline"
-          className={cn("shrink-0 text-xs font-medium uppercase tracking-wide", styles.badge)}
-        >
-          {hypothesis.verdict}
-        </Badge>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {topStat && (
+            <Badge
+              variant="outline"
+              className="text-xs font-mono border-violet-500/30 bg-violet-500/10 text-violet-400"
+              title={topStat.interpretation}
+            >
+              {topStat.sigma!.toFixed(1)}σ
+            </Badge>
+          )}
+          <Badge
+            variant="outline"
+            className={cn("text-xs font-medium uppercase tracking-wide", styles.badge)}
+          >
+            {hypothesis.verdict}
+          </Badge>
+        </div>
       </div>
 
       {hypothesis.verdict !== "untested" && (

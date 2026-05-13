@@ -36,6 +36,14 @@ class QueryPlan(BaseModel):
     )
 
 
+class StatResult(BaseModel):
+    type: str
+    interpretation: str
+    is_significant: bool
+    sigma: Optional[float] = None
+    p_value: Optional[float] = None
+
+
 class QueryResult(BaseModel):
     hypothesis_id: str
     sql: str
@@ -43,6 +51,7 @@ class QueryResult(BaseModel):
     rows: list[list]
     row_count: int
     error: Optional[str] = None
+    stats: list[StatResult] = Field(default_factory=list)
 
 
 class EvidenceScore(BaseModel):

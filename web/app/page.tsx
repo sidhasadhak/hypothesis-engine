@@ -197,7 +197,12 @@ export default function Home() {
                           Hypotheses — {state.hypotheses.filter(h => h.verdict !== "untested").length} of {state.hypotheses.length} tested
                         </p>
                         {state.hypotheses.map((h, i) => (
-                          <HypothesisCard key={h.id} hypothesis={h} index={i} />
+                          <HypothesisCard
+                            key={h.id}
+                            hypothesis={h}
+                            index={i}
+                            stats={state.statsPerHypothesis[i]}
+                          />
                         ))}
                       </div>
                     )}

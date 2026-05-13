@@ -8,10 +8,19 @@ export interface Hypothesis {
   key_finding: string;
 }
 
+export interface StatResult {
+  type: "anomaly" | "trend" | "comparison" | "distribution";
+  interpretation: string;
+  is_significant: boolean;
+  sigma: number | null;
+  p_value: number | null;
+}
+
 export interface QuerySummary {
   sql: string;
   row_count: number;
   error: string | null;
+  stats: StatResult[];
 }
 
 export interface Finding {
@@ -42,7 +51,7 @@ export interface Report {
 export type InvestigationEvent =
   | { type: "start"; question: string }
   | { type: "hypotheses"; hypotheses: Hypothesis[] }
-  | { type: "queries_executed"; iteration: number; hypothesis_idx: number; queries: QuerySummary[]; corrections: { fix_explanation: string; data_quality_issue: string | null }[] }
+  | { type: "queries_executed"; iteration: number; hypothesis_idx: number; queries: QuerySummary[]; corrections: { fix_explanation: string; data_quality_issue: string | null }[]; stats: StatResult[] }
   | { type: "score"; iteration: number; score: { hypothesis_id: string; confidence: number; verdict: Verdict; key_finding: string }; hypotheses: Hypothesis[] }
   | { type: "report"; report: Report; hypotheses: Hypothesis[]; query_count: number }
   | { type: "error"; message: string }
@@ -57,4 +66,5 @@ export interface InvestigationState {
   log: string[];
   report: Report | null;
   error: string | null;
+  statsPerHypothesis: Record<number, StatResult[]>;
 }

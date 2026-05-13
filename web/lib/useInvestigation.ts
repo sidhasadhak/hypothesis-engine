@@ -12,6 +12,7 @@ const initial: InvestigationState = {
   log: [],
   report: null,
   error: null,
+  statsPerHypothesis: {},
 };
 
 type Action = { type: "EVENT"; event: InvestigationEvent } | { type: "RESET" };
@@ -36,14 +37,24 @@ function reducer(state: InvestigationState, action: Action): InvestigationState 
       const correctionLogs = (event.corrections ?? []).map(
         c => `↺ Auto-corrected: ${c.fix_explanation}${c.data_quality_issue ? ` · DQ: ${c.data_quality_issue}` : ""}`
       );
+      const significantStats = (event.stats ?? []).filter(s => s.is_significant);
+      const statsLogs = significantStats.map(
+        s => `📊 ${s.sigma != null ? `${s.sigma}σ` : "sig."} — ${s.interpretation}`
+      );
+      const prevStats = state.statsPerHypothesis[event.hypothesis_idx] ?? [];
       return {
         ...state,
         queriesExecuted: state.queriesExecuted + event.queries.length,
         currentIteration: event.iteration,
+        statsPerHypothesis: {
+          ...state.statsPerHypothesis,
+          [event.hypothesis_idx]: [...prevStats, ...(event.stats ?? [])],
+        },
         log: [
           ...state.log,
           `H${event.hypothesis_idx + 1}: ran ${event.queries.length} quer${event.queries.length === 1 ? "y" : "ies"}`,
           ...correctionLogs,
+          ...statsLogs,
         ],
       };
     }
