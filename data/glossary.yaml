@@ -1,0 +1,284 @@
+tables:
+  customers:
+    description: 'Master customer list. One row per customer account. Use for all
+      segment and region breakdowns — do not re-derive these from other tables.
+
+      '
+    grain: one row per customer_id
+    joins:
+    - JOIN daily_revenue ON customers.customer_id = daily_revenue.customer_id
+    - JOIN kpi_daily ON customers.region = kpi_daily.region AND customers.segment
+      = kpi_daily.segment
+    columns:
+      customer_id:
+        description: Surrogate key — unique identifier for every customer account
+      segment:
+        description: Customer size tier assigned at account creation
+        values: SMB, Enterprise
+        caveats: Segment is assigned once and never changes — do not use as a proxy
+          for ARR
+      region:
+        description: Geographic sales region
+        values: APAC, EMEA, NA
+      signup_date:
+        description: Date the customer account was first created (UTC)
+  daily_revenue:
+    description: 'Transactional revenue log. One row per payment attempt per customer
+      per day. This is the source of truth for revenue and payment failure analysis.
+      Aggregate with SUM(amount) and filter status = ''success'' for recognised revenue.
+
+      '
+    grain: one row per (customer_id, date, payment_id)
+    joins:
+    - JOIN customers ON daily_revenue.customer_id = customers.customer_id
+    columns:
+      customer_id:
+        description: Foreign key to customers table
+      date:
+        description: Calendar date of the payment attempt (UTC, date only — no time
+          component)
+      amount:
+        description: Payment amount in USD. Includes all successful and failed attempts.
+        caveats: Do NOT sum amount without filtering status = 'success' — failed rows
+          inflate revenue figures
+      status:
+        description: Outcome of the payment attempt
+        values: success, failed
+        caveats: 'Failed rows are real attempts that were declined. Payment failure
+          rate = COUNT(*) FILTER (WHERE status = ''failed'') / COUNT(*). A spike in
+          failed rows is a leading indicator of a gateway or card issue.
+
+          '
+  events:
+    description: 'Business event calendar. One row per notable event (outages, promotions,
+      holidays, product launches) that may explain metric movements. Always check
+      this table when investigating anomalies before concluding a root cause.
+
+      '
+    grain: one row per event_id (an event may span multiple dates via start_date/end_date)
+    columns:
+      event_type:
+        description: Category of the business event
+        values: outage, promotion, holiday, product_launch
+      event_date:
+        description: Date the event occurred or started (UTC)
+      description:
+        description: Free-text human-readable description of the event
+      impact:
+        description: 'Expected directional impact on revenue. Values: positive (promotion/launch),
+          negative (outage), neutral (holiday — varies by region)
+
+          '
+  kpi_daily:
+    description: 'Pre-aggregated daily KPI summary by region and customer segment.
+      Use this table for trend queries and period-over-period comparisons — it is
+      much faster than aggregating daily_revenue directly. Do not use for payment
+      failure analysis (status not available here).
+
+      '
+    grain: one row per (date, region, segment, metric)
+    joins:
+    - JOIN customers ON kpi_daily.region = customers.region AND kpi_daily.segment
+      = customers.segment
+    columns:
+      date:
+        description: Calendar date (UTC)
+      region:
+        description: Geographic sales region (matches customers.region)
+        values: APAC, EMEA, NA
+      segment:
+        description: Customer size tier (matches customers.segment)
+        values: SMB, Enterprise
+      metric:
+        description: Name of the KPI being reported
+        values: revenue, churn_count, new_customers, payment_failure_rate
+      value:
+        description: Numeric value of the metric for this (date, region, segment)
+          combination
+        caveats: 'revenue values are in USD and represent successfully collected amounts
+          only. payment_failure_rate is a ratio (0.0–1.0), not a percentage.
+
+          '
+  customer:
+    description: Contains core customer demographic and location data, likely used
+      to link orders to physical locations and unique individuals.
+    grain: One row per unique customer, identified by customer_id, with their associated
+      geographic and unique identifiers.
+    auto_generated: true
+    columns:
+      customer_id:
+        description: Primary internal identifier for a customer in the system.
+      customer_unique_id:
+        description: A business-level unique identifier for the customer, possibly
+          used for anonymization or cross-system identification.
+      customer_zip_code_prefix:
+        description: First 3–5 digits of the customer's ZIP/postal code, used for
+          geographic aggregation.
+      customer_city:
+        description: Name of the city where the customer resides.
+      customer_state:
+        description: Two-letter abbreviation of the state or province where the customer
+          resides.
+        values: AC, AL, AM, AP, BA, CE, DF, ES, GO, MA, MG, MS, MT, PA, PB, PE, PI,
+          PR, RJ, RN, RO, RR, RS, SC, SE, SP, TO
+        caveats: Values follow Brazilian state abbreviations; likely reflects a Brazilian
+          e-commerce context.
+  order_items:
+    description: This table stores individual items within orders, capturing the products
+      purchased, their sellers, and associated pricing and shipping details.
+    grain: One row per unique order item, representing a single product line within
+      an order
+    auto_generated: true
+    columns:
+      order_id:
+        description: Unique identifier for the order to which this item belongs
+      order_item_id:
+        description: Sequential index of this item within its order (e.g., 1 for first
+          item, 2 for second, etc.)
+      product_id:
+        description: Unique identifier for the product in this order item
+      seller_id:
+        description: Unique identifier for the seller who fulfilled this order item
+      shipping_limit_date:
+        description: Deadline by which the seller must ship this item (stored as ISO
+          8601 string)
+        values: e.g., '2017-09-15T10:00:00', '2017-10-02T12:30:00'
+      price:
+        description: Unit price of the product for this order item (excluding freight)
+      freight_value:
+        description: Shipping cost allocated to this specific order item
+  order_payments:
+    description: Stores payment details for each order, capturing how payments were
+      split across installments and payment methods.
+    grain: One row per payment method installment for an order (i.e., an order may
+      have multiple rows if paid with multiple methods or multiple installments).
+    auto_generated: true
+    columns:
+      order_id:
+        description: Unique identifier for the order being paid.
+      payment_sequential:
+        description: Sequential number indicating the order of this payment installment
+          within the same order (e.g., 1 for first installment, 2 for second, etc.).
+      payment_type:
+        description: Method used for the payment (e.g., credit card, boleto, voucher).
+        values: credit_card, boleto, voucher, cash
+      payment_installments:
+        description: Number of installments chosen for this payment (e.g., 1 for single
+          payment, 12 for 12-month financing).
+        caveats: May be 0 or 1 for non-installment payments; values >1 indicate installment
+          plans.
+      payment_value:
+        description: Monetary amount paid in this installment (in local currency).
+        caveats: Sum of payment_value across all rows for a given order_id should
+          equal the order's total value.
+  order_reviews:
+    description: Customer reviews for orders, capturing feedback including scores,
+      comments, and timestamps for when reviews were submitted and responded to.
+    grain: One row per customer review, uniquely identified by review_id and linked
+      to a specific order_id
+    auto_generated: true
+    columns:
+      review_id:
+        description: Unique identifier for each review
+      order_id:
+        description: Identifier of the order being reviewed
+      review_score:
+        description: Numerical rating given by the customer (typically 1–5)
+        values: 1, 2, 3, 4, 5
+      review_comment_title:
+        description: Short headline or summary of the review provided by the customer
+      review_comment_message:
+        description: Full text content of the customer's review
+      review_creation_date:
+        description: Date and time when the review was created/submitted
+        caveats: Stored as character varying (string); likely in ISO 8601 or similar
+          format, but may require parsing
+      review_answer_timestamp:
+        description: Date and time when the seller or platform responded to the review
+        caveats: May be NULL if no response has been provided; stored as character
+          varying (string)
+  orders:
+    description: This table records individual customer orders, including timestamps
+      for purchase, approval, delivery to carrier, delivery to customer, and estimated
+      delivery.
+    grain: One row represents one unique order identified by order_id
+    auto_generated: true
+    columns:
+      order_id:
+        description: Unique identifier for each order
+      customer_id:
+        description: Identifier for the customer who placed the order
+      order_status:
+        description: Current status of the order (e.g., delivered, shipped, canceled)
+        values: delivered, shipped, canceled, approved, invoiced, processing, created,
+          null
+        caveats: Some rows may have NULL status; may reflect legacy or incomplete
+          data
+      order_purchase_timestamp:
+        description: Timestamp when the customer placed the order
+        caveats: Stored as string; format appears to be 'YYYY-MM-DD HH:MM:SS'
+      order_approved_at:
+        description: Timestamp when the order was approved (e.g., payment confirmed)
+        caveats: May be NULL for orders that were never approved (e.g., canceled or
+          unpaid)
+      order_delivered_carrier_date:
+        description: Timestamp when the order was handed over to the carrier
+        caveats: May be NULL for orders not yet shipped or not using a carrier
+      order_delivered_customer_date:
+        description: Timestamp when the order was delivered to the customer
+        caveats: May be NULL for orders not yet delivered
+      order_estimated_delivery_date:
+        description: Estimated delivery date provided by the seller or system
+        caveats: May be NULL if no estimate was set; may differ from actual delivery
+          date
+  product_category_name_translation:
+    description: Maps product category names from Portuguese to English, used to standardize
+      or translate category labels across datasets.
+    grain: One row per unique product category, with its Portuguese and English names.
+    auto_generated: true
+    columns:
+      product_category_name:
+        description: Portuguese name of the product category
+      product_category_name_english:
+        description: English translation of the product category name
+  products:
+    description: Contains product catalog information including identifiers, category,
+      and physical attributes like size and weight.
+    grain: One row per unique product_id
+    auto_generated: true
+    columns:
+      product_id:
+        description: Unique identifier for each product
+      product_category_name:
+        description: Name of the product's main category
+      product_name_lenght:
+        description: Number of characters in the product name
+      product_description_lenght:
+        description: Number of characters in the product description
+      product_photos_qty:
+        description: Number of photos associated with the product
+      product_weight_g:
+        description: Product weight in grams
+      product_length_cm:
+        description: Product length in centimeters
+      product_height_cm:
+        description: Product height in centimeters
+      product_width_cm:
+        description: Product width in centimeters
+  sellers:
+    description: Contains information about sellers registered in the platform, including
+      their location details.
+    grain: One row per unique seller
+    auto_generated: true
+    columns:
+      seller_id:
+        description: Unique identifier for a seller
+      seller_zip_code_prefix:
+        description: First 5 digits of the seller's postal code (Brazilian CEP prefix)
+      seller_city:
+        description: Name of the city where the seller is located
+      seller_state:
+        description: Two-letter abbreviation of the Brazilian state where the seller
+          is located
+        values: SP, RJ, MG, RS, PR, SC, BA, ES, GO, AM, CE, PA, PB, PE, PI, RN, SE,
+          AL, DF, MT, MS, MA, TO, AP, RR, AC, RO, AC

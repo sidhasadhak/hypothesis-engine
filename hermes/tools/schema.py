@@ -3,25 +3,11 @@ from __future__ import annotations
 
 import duckdb
 
-
-_TABLE_DESCRIPTIONS: dict[str, str] = {
-    "customers": "One row per customer. Use for segment/region breakdowns.",
-    "daily_revenue": "One row per customer per day. Source of truth for revenue figures.",
-    "events": "Business events (outages, promotions, etc.) that may correlate with metric movements.",
-    "kpi_daily": "Pre-aggregated daily KPIs by region and segment. Fastest table for trend queries.",
-}
-
-_COLUMN_HINTS: dict[str, str] = {
-    "daily_revenue.status": "'success' or 'failed' — failed rows indicate payment failures",
-    "customers.segment": "'SMB' or 'Enterprise'",
-    "customers.region": "'APAC', 'EMEA', or 'NA'",
-    "kpi_daily.metric": "e.g. 'revenue', 'churn_count', 'new_customers'",
-    "events.event_type": "'outage', 'promotion', 'holiday', 'product_launch'",
-}
+from hermes.semantic.glossary import apply_glossary
 
 
 def build_schema_context(conn: duckdb.DuckDBPyConnection) -> str:
-    """Return a rich schema description for the LLM, including row counts and hints."""
+    """Return a rich schema description for the LLM, including row counts and glossary annotations."""
     tables = [row[0] for row in conn.execute("SHOW TABLES").fetchall()]
     parts: list[str] = []
 
@@ -31,23 +17,14 @@ def build_schema_context(conn: duckdb.DuckDBPyConnection) -> str:
         except Exception:
             count = "?"
 
-        desc = _TABLE_DESCRIPTIONS.get(table, "")
-        header = f"TABLE: {table}  ({count:,} rows)"
-        if desc:
-            header += f"  — {desc}"
-        parts.append(header)
+        parts.append(f"TABLE: {table}  ({count:,} rows)")
 
         cols = conn.execute(f"DESCRIBE {table}").fetchall()
         for col in cols:
             col_name, col_type = col[0], col[1]
-            hint_key = f"{table}.{col_name}"
-            hint = _COLUMN_HINTS.get(hint_key, "")
-            line = f"  {col_name}  {col_type}"
-            if hint:
-                line += f"  [{hint}]"
-            parts.append(line)
+            parts.append(f"  {col_name}  {col_type}")
 
-        # Show a sample of distinct values for key categorical columns
+        # Sample distinct values for categorical columns (quick orientation for the LLM)
         categorical = [c[0] for c in cols if "VARCHAR" in c[1] or "TEXT" in c[1]]
         for col_name in categorical[:3]:
             try:
@@ -72,4 +49,10 @@ def build_schema_context(conn: duckdb.DuckDBPyConnection) -> str:
     except Exception:
         pass
 
-    return "\n".join(parts)
+    raw = "\n".join(parts)
+    from hermes.semantic.autoseed import seed_missing_tables
+    from hermes.semantic.retriever import build_schema_index
+    seed_missing_tables(raw)
+    enriched = apply_glossary(raw)
+    build_schema_index()  # best-effort; keeps vector index fresh after glossary changes
+    return enriched

@@ -200,7 +200,11 @@ class PostgresConnection(DatabaseConnection):
         hints = self._detect_sql_hints(rows)
         if hints:
             schema_str += "\n\n" + hints
-        return schema_str
+
+        from hermes.semantic.autoseed import seed_missing_tables
+        from hermes.semantic.glossary import apply_glossary
+        seed_missing_tables(schema_str)
+        return apply_glossary(schema_str)
 
     def _detect_sql_hints(self, columns: list) -> str:
         """

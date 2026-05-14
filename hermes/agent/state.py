@@ -70,6 +70,7 @@ class Finding(BaseModel):
     claim: str
     evidence: str
     confidence: float
+    hypothesis_id: Optional[str] = None
 
 
 class Pitfall(BaseModel):
@@ -131,9 +132,16 @@ class AgentState(TypedDict):
     # Accumulated pitfalls — injected into all subsequent query-planning prompts
     pitfalls: Annotated[list[Pitfall], operator.add]
 
+    # Relevant past investigation summaries (fetched once at decompose time)
+    prior_analyses: list[str]
+
     # Loop control
     iteration: int
     max_iterations: int
 
     # Output
     report: Optional[AnalysisReport]
+
+    # Human-in-the-Loop (optional — only present when hitl_enabled=True)
+    hitl_enabled: bool
+    human_feedback: Optional[str]

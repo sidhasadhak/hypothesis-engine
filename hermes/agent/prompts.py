@@ -30,9 +30,10 @@ Description: {hypothesis_description}
 SCHEMA:
 {schema}
 
-INVESTIGATION CONTEXT (queries already run):
+INVESTIGATION CONTEXT (queries already run this session):
 {prior_context}
 
+{prior_analyses_section}
 {pitfall_section}
 Write 1-3 SQL SELECT queries that together confirm or refute this hypothesis.
 Rules:
@@ -42,6 +43,7 @@ Rules:
 - For time comparisons: compare the anomaly period against a 30-day baseline
 - Prefer queries that produce small, interpretable result sets (< 50 rows)
 - Do not re-run queries that are already in the investigation context
+- If a past investigation already answered this hypothesis conclusively, note it and skip redundant queries
 """
 
 FIX_SQL_PROMPT = """\
@@ -108,11 +110,13 @@ HYPOTHESIS RESULTS:
 FULL EVIDENCE LOG:
 {evidence_log}
 
-{pitfall_section}
+{pitfall_section}{human_feedback_section}
 Write a clear, honest report. Lead with the most important finding.
 - The headline should be a single sentence a CFO could read in 5 seconds
 - The verdict should explain what happened, why, and which segments are affected
 - Key findings should be ranked by evidence strength (most confident first)
+- For EACH key finding, set hypothesis_id to the ID of the hypothesis it came from (e.g. "H1").
+  This links claims back to the SQL evidence. Use null only if genuinely cross-cutting.
 - Include what was tested and ruled out — this builds trust
 - data_quality_notes: list any structural data issues found (NULLs, type problems, missing data).
   Each note needs: table, column (if applicable), issue, impact on analysis, recommended_fix.

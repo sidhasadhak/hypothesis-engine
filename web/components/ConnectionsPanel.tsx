@@ -2,12 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import {
   addConnection,
   deleteConnection,
   getConnections,
-  getSchema,
   testConnection,
   type Connection,
 } from "@/lib/api";
@@ -16,6 +14,8 @@ import { cn } from "@/lib/utils";
 interface Props {
   selectedId: string;
   onSelect: (id: string) => void;
+  activeSchemaId: string | null;
+  onSchemaSelect: (id: string | null) => void;
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -28,16 +28,12 @@ const TYPE_COLORS: Record<string, string> = {
   postgres: "border-blue-500/30 bg-blue-500/10 text-blue-400",
 };
 
-export function ConnectionsPanel({ selectedId, onSelect }: Props) {
+export function ConnectionsPanel({ selectedId, onSelect, activeSchemaId, onSchemaSelect }: Props) {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [adding, setAdding] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; msg: string }>>({});
-  const [schemaConn, setSchemaConn] = useState<string | null>(null);
-  const [schema, setSchema] = useState<string>("");
-  const [schemaLoading, setSchemaLoading] = useState(false);
 
-  // Add form state
   const [formName, setFormName] = useState("");
   const [formType, setFormType] = useState("postgres");
   const [formDsn, setFormDsn] = useState("");
@@ -45,9 +41,7 @@ export function ConnectionsPanel({ selectedId, onSelect }: Props) {
   const [formLoading, setFormLoading] = useState(false);
 
   const load = async () => {
-    try {
-      setConnections(await getConnections());
-    } catch {}
+    try { setConnections(await getConnections()); } catch {}
   };
 
   useEffect(() => { load(); }, []);
@@ -64,22 +58,10 @@ export function ConnectionsPanel({ selectedId, onSelect }: Props) {
     }
   };
 
-  const handleSchema = async (id: string) => {
-    if (schemaConn === id) { setSchemaConn(null); return; }
-    setSchemaConn(id);
-    setSchemaLoading(true);
-    try {
-      setSchema(await getSchema(id));
-    } catch {
-      setSchema("Failed to load schema.");
-    } finally {
-      setSchemaLoading(false);
-    }
-  };
-
   const handleDelete = async (id: string) => {
     await deleteConnection(id);
     if (selectedId === id) onSelect("fixture");
+    if (activeSchemaId === id) onSchemaSelect(null);
     await load();
   };
 
@@ -99,7 +81,7 @@ export function ConnectionsPanel({ selectedId, onSelect }: Props) {
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full w-72 shrink-0 border-r border-zinc-800">
       <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
         <p className="text-xs font-semibold text-zinc-300 uppercase tracking-wide">Connections</p>
         <button
@@ -110,7 +92,6 @@ export function ConnectionsPanel({ selectedId, onSelect }: Props) {
         </button>
       </div>
 
-      {/* Add connection form */}
       {adding && (
         <form onSubmit={handleAdd} className="p-4 border-b border-zinc-800 space-y-3 bg-zinc-900/40">
           <div className="space-y-1">
@@ -157,10 +138,10 @@ export function ConnectionsPanel({ selectedId, onSelect }: Props) {
         </form>
       )}
 
-      {/* Connection list */}
       <div className="flex-1 overflow-y-auto">
         {connections.map(conn => {
           const isSelected = conn.id === selectedId;
+          const isSchemaActive = conn.id === activeSchemaId;
           const result = testResults[conn.id];
           return (
             <div key={conn.id} className={cn("border-b border-zinc-800/60", isSelected && "bg-zinc-900/60")}>
@@ -179,7 +160,6 @@ export function ConnectionsPanel({ selectedId, onSelect }: Props) {
                 <p className="text-xs font-mono text-zinc-600 mt-0.5 truncate">{conn.dsn_preview}</p>
               </button>
 
-              {/* Actions row */}
               <div className="px-4 pb-2 flex items-center gap-3">
                 <button
                   onClick={() => handleTest(conn.id)}
@@ -189,10 +169,13 @@ export function ConnectionsPanel({ selectedId, onSelect }: Props) {
                   {testing === conn.id ? "Testing…" : "Test"}
                 </button>
                 <button
-                  onClick={() => handleSchema(conn.id)}
-                  className="text-xs text-zinc-500 hover:text-zinc-300 transition"
+                  onClick={() => onSchemaSelect(isSchemaActive ? null : conn.id)}
+                  className={cn(
+                    "text-xs transition",
+                    isSchemaActive ? "text-zinc-200" : "text-zinc-500 hover:text-zinc-300"
+                  )}
                 >
-                  {schemaConn === conn.id ? "Hide schema" : "Schema"}
+                  {isSchemaActive ? "Schema ●" : "Schema"}
                 </button>
                 {!conn.builtin && (
                   <button
@@ -213,23 +196,6 @@ export function ConnectionsPanel({ selectedId, onSelect }: Props) {
           );
         })}
       </div>
-
-      {/* Schema drawer */}
-      {schemaConn && (
-        <div className="border-t border-zinc-800 flex flex-col" style={{ maxHeight: "40%" }}>
-          <div className="px-4 py-2 flex items-center justify-between border-b border-zinc-800">
-            <p className="text-xs text-zinc-500 uppercase tracking-wide">Schema</p>
-            <button onClick={() => setSchemaConn(null)} className="text-xs text-zinc-600 hover:text-zinc-300">✕</button>
-          </div>
-          <div className="overflow-y-auto p-4">
-            {schemaLoading ? (
-              <p className="text-xs text-zinc-600">Loading…</p>
-            ) : (
-              <pre className="text-xs text-zinc-400 whitespace-pre-wrap font-mono leading-relaxed">{schema}</pre>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

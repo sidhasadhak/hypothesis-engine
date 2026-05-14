@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from functools import partial
+from pathlib import Path
 from typing import Any
 
 import duckdb
@@ -17,8 +18,17 @@ from hermes.agent.nodes import (
 from hermes.agent.state import AgentState
 from hermes.tools.schema import build_schema_context
 
+_CHECKPOINT_DB = Path(__file__).parent.parent.parent / "data" / "checkpoints.db"
 
-def _compile(execute_node):
+
+def _checkpointer():
+    import sqlite3
+    from langgraph.checkpoint.sqlite import SqliteSaver
+    conn = sqlite3.connect(str(_CHECKPOINT_DB), check_same_thread=False)
+    return SqliteSaver(conn)
+
+
+def _compile(execute_node, hitl: bool = False):
     graph = StateGraph(AgentState)
     graph.add_node("decompose", decompose_question)
     graph.add_node("plan_and_execute", execute_node)
@@ -33,7 +43,8 @@ def _compile(execute_node):
         {"plan_and_execute": "plan_and_execute", "synthesize": "synthesize"},
     )
     graph.add_edge("synthesize", END)
-    return graph.compile()
+    interrupt_before = ["synthesize"] if hitl else []
+    return graph.compile(checkpointer=_checkpointer(), interrupt_before=interrupt_before)
 
 
 def build_graph(conn: duckdb.DuckDBPyConnection):
@@ -45,9 +56,9 @@ def build_graph(conn: duckdb.DuckDBPyConnection):
     return _compile(partial(plan_and_execute, conn=db))
 
 
-def build_graph_generic(db):
+def build_graph_generic(db, hitl: bool = False):
     """Build the graph bound to any DatabaseConnection instance."""
-    return _compile(partial(plan_and_execute, conn=db))
+    return _compile(partial(plan_and_execute, conn=db), hitl=hitl)
 
 
 def run_investigation(

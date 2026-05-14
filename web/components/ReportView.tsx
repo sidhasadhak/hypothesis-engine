@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -10,14 +11,15 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { DataQualityNote, Report } from "@/lib/types";
+import type { DataQualityNote, QueryCitation, Report } from "@/lib/types";
 
 interface Props {
   report: Report;
   queryCount: number;
+  queryHistory?: QueryCitation[];
 }
 
-export function ReportView({ report, queryCount }: Props) {
+export function ReportView({ report, queryCount, queryHistory = [] }: Props) {
   const dqNotes = report.data_quality_notes ?? [];
 
   return (
@@ -40,37 +42,17 @@ export function ReportView({ report, queryCount }: Props) {
       {report.key_findings.length > 0 && (
         <div className="space-y-3">
           <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wide">Key Findings</h3>
-          <Table>
-            <TableHeader>
-              <TableRow className="border-zinc-800 hover:bg-transparent">
-                <TableHead className="text-zinc-500 w-8">#</TableHead>
-                <TableHead className="text-zinc-500">Finding</TableHead>
-                <TableHead className="text-zinc-500">Evidence</TableHead>
-                <TableHead className="text-zinc-500 text-right w-24">Confidence</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {report.key_findings.map((f, i) => (
-                <TableRow key={i} className="border-zinc-800 hover:bg-zinc-900/40">
-                  <TableCell className="text-zinc-500 font-mono text-xs">{i + 1}</TableCell>
-                  <TableCell className="text-zinc-200 text-sm">{f.claim}</TableCell>
-                  <TableCell className="text-zinc-400 text-xs max-w-[260px]">{f.evidence}</TableCell>
-                  <TableCell className="text-right">
-                    <Badge
-                      variant="outline"
-                      className={
-                        f.confidence >= 0.7
-                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
-                          : "border-amber-500/30 bg-amber-500/10 text-amber-400"
-                      }
-                    >
-                      {Math.round(f.confidence * 100)}%
-                    </Badge>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <div className="space-y-2">
+            {report.key_findings.map((f, i) => {
+              const citations = queryHistory.filter(
+                q => q.hypothesis_id && f.hypothesis_id &&
+                     q.hypothesis_id.toUpperCase() === f.hypothesis_id.toUpperCase()
+              );
+              return (
+                <FindingRow key={i} index={i} finding={f} citations={citations} />
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -148,6 +130,70 @@ export function ReportView({ report, queryCount }: Props) {
       )}
 
       <p className="text-xs text-zinc-600 text-center">{queryCount} SQL queries executed</p>
+    </div>
+  );
+}
+
+function FindingRow({
+  index,
+  finding,
+  citations,
+}: {
+  index: number;
+  finding: { claim: string; evidence: string; confidence: number; hypothesis_id: string | null };
+  citations: QueryCitation[];
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 overflow-hidden">
+      <div className="flex items-start gap-3 p-3">
+        <span className="shrink-0 mt-0.5 text-xs font-mono text-zinc-600 w-5 text-right">
+          {index + 1}
+        </span>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm text-zinc-200">{finding.claim}</p>
+          <p className="mt-0.5 text-xs text-zinc-500 leading-relaxed">{finding.evidence}</p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <Badge
+            variant="outline"
+            className={
+              finding.confidence >= 0.7
+                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+                : "border-amber-500/30 bg-amber-500/10 text-amber-400"
+            }
+          >
+            {Math.round(finding.confidence * 100)}%
+          </Badge>
+          {citations.length > 0 && (
+            <button
+              onClick={() => setOpen(o => !o)}
+              className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 border border-zinc-700 rounded px-1.5 py-0.5 transition"
+              title="Show source queries"
+            >
+              <span className="font-mono">{finding.hypothesis_id}</span>
+              <span className="text-zinc-700">{open ? "▲" : "▼"}</span>
+            </button>
+          )}
+        </div>
+      </div>
+      {open && citations.length > 0 && (
+        <div className="border-t border-zinc-800 divide-y divide-zinc-800/60">
+          {citations.map((c, i) => (
+            <div key={i} className="px-4 py-2 space-y-1">
+              <pre className="text-xs text-zinc-400 bg-zinc-950 rounded p-2 overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed">
+                {c.sql}
+              </pre>
+              <p className="text-xs text-zinc-600">
+                {c.error
+                  ? <span className="text-red-400">{c.error}</span>
+                  : <span>{c.row_count} row{c.row_count !== 1 ? "s" : ""}</span>
+                }
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

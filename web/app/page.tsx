@@ -2,6 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ConnectionsPanel } from "@/components/ConnectionsPanel";
+import { HistoryPanel } from "@/components/HistoryPanel";
+import { HistoryDetailPanel } from "@/components/HistoryDetailPanel";
+import { SchemaPanel } from "@/components/SchemaPanel";
+import { FeedbackPrompt } from "@/components/FeedbackPrompt";
 import { HypothesisCard } from "@/components/HypothesisCard";
 import { ReportView } from "@/components/ReportView";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -14,13 +18,16 @@ const EXAMPLE_QUESTIONS = [
   "Is the APAC revenue decline a trend or a one-time event?",
 ];
 
-type Tab = "investigate" | "connections";
+type Tab = "investigate" | "connections" | "history";
 
 export default function Home() {
-  const { state, investigate } = useInvestigation();
+  const { state, investigate, submitFeedback, loadHistorical } = useInvestigation();
   const [input, setInput] = useState("");
+  const [hitl, setHitl] = useState(false);
   const [tab, setTab] = useState<Tab>("investigate");
   const [selectedConn, setSelectedConn] = useState("mydb");
+  const [schemaConnId, setSchemaConnId] = useState<string | null>(null);
+  const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -31,7 +38,7 @@ export default function Home() {
     const question = q ?? input.trim();
     if (!question || state.status === "running") return;
     setInput("");
-    investigate(question, selectedConn);
+    investigate(question, selectedConn, hitl);
   };
 
   return (
@@ -54,9 +61,17 @@ export default function Home() {
               Investigating…
             </div>
           )}
+          {state.status === "paused" && (
+            <div className="flex items-center gap-2 text-xs text-violet-400">
+              <span className="relative flex h-2 w-2">
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-violet-400" />
+              </span>
+              Awaiting review…
+            </div>
+          )}
           {/* Tab switcher */}
           <div className="flex rounded-md border border-zinc-800 overflow-hidden">
-            {(["investigate", "connections"] as Tab[]).map(t => (
+            {(["investigate", "history", "connections"] as Tab[]).map(t => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
@@ -74,12 +89,29 @@ export default function Home() {
       </header>
 
       <div className="flex-1 flex overflow-hidden">
-        {tab === "connections" ? (
+        {tab === "history" ? (
+          /* ── History tab ── */
+          <div className="flex-1 flex overflow-hidden">
+            <div className="w-80 shrink-0 border-r border-zinc-800 flex flex-col">
+              <HistoryPanel
+                selectedId={selectedHistoryId}
+                onSelect={setSelectedHistoryId}
+              />
+            </div>
+            <HistoryDetailPanel invId={selectedHistoryId} />
+          </div>
+        ) : tab === "connections" ? (
           /* ── Connections tab ── */
-          <div className="flex-1 max-w-md mx-auto w-full">
+          <div className="flex-1 flex overflow-hidden">
             <ConnectionsPanel
               selectedId={selectedConn}
               onSelect={id => { setSelectedConn(id); setTab("investigate"); }}
+              activeSchemaId={schemaConnId}
+              onSchemaSelect={setSchemaConnId}
+            />
+            <SchemaPanel
+              connId={schemaConnId}
+              connName={schemaConnId ?? undefined}
             />
           </div>
         ) : (
@@ -113,11 +145,20 @@ export default function Home() {
                 />
                 <button
                   onClick={() => handleSubmit()}
-                  disabled={!input.trim() || state.status === "running"}
+                  disabled={!input.trim() || state.status === "running" || state.status === "paused"}
                   className="w-full rounded-lg bg-zinc-100 text-zinc-900 text-sm font-medium py-2 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition"
                 >
                   {state.status === "running" ? "Investigating…" : "Investigate →"}
                 </button>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <div
+                    onClick={() => setHitl(v => !v)}
+                    className={`relative w-8 h-4 rounded-full transition ${hitl ? "bg-violet-600" : "bg-zinc-700"}`}
+                  >
+                    <span className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${hitl ? "translate-x-4" : ""}`} />
+                  </div>
+                  <span className="text-xs text-zinc-500">Review before report</span>
+                </label>
               </div>
 
               {/* Examples */}
@@ -207,6 +248,14 @@ export default function Home() {
                       </div>
                     )}
 
+                    {state.status === "paused" && state.investigationId && (
+                      <FeedbackPrompt
+                        investigationId={state.investigationId}
+                        hypotheses={state.hypotheses}
+                        onSubmit={feedback => submitFeedback(state.investigationId!, feedback)}
+                      />
+                    )}
+
                     {state.status === "running" && (
                       <div className="flex items-center gap-3 text-sm text-zinc-500">
                         <div className="flex gap-1">
@@ -223,10 +272,66 @@ export default function Home() {
                     )}
 
                     {state.report && (
-                      <div className="space-y-3">
+                      <div className="space-y-4">
                         <Separator className="bg-zinc-800" />
+
+                        {/* Cache hit banner */}
+                        {state.fromCache && state.cachedQuestion && (
+                          <div className="rounded-md border border-sky-500/25 bg-sky-500/10 px-3 py-2 flex items-start gap-2">
+                            <span className="text-sky-400 shrink-0 text-xs mt-0.5">⚡</span>
+                            <div>
+                              <p className="text-xs text-sky-400 font-medium">Matched a prior investigation</p>
+                              <p className="text-xs text-zinc-500 mt-0.5">Originally asked: "{state.cachedQuestion}"</p>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Hypotheses tested — shown only after a HITL review */}
+                        {state.humanFeedback !== null && state.hypotheses.length > 0 && (
+                          <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 space-y-3">
+                            <p className="text-xs text-zinc-500 uppercase tracking-wide">Hypotheses tested</p>
+                            <div className="space-y-2">
+                              {state.hypotheses.map((h, i) => {
+                                const colors: Record<string, string> = {
+                                  confirmed: "text-emerald-400 bg-emerald-500/10 border-emerald-500/25",
+                                  refuted: "text-red-400 bg-red-500/10 border-red-500/25",
+                                  inconclusive: "text-amber-400 bg-amber-500/10 border-amber-500/25",
+                                  untested: "text-zinc-500 bg-zinc-800 border-zinc-700",
+                                };
+                                const cls = colors[h.verdict] ?? colors.untested;
+                                return (
+                                  <div key={h.id} className={`rounded-lg border px-3 py-2 flex items-start gap-3 ${cls}`}>
+                                    <span className="text-xs font-mono shrink-0 mt-0.5 opacity-60">H{i + 1}</span>
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-xs text-zinc-300 leading-snug">{h.description}</p>
+                                      {h.key_finding && (
+                                        <p className="text-xs mt-1 opacity-70 leading-snug">{h.key_finding}</p>
+                                      )}
+                                    </div>
+                                    <div className="shrink-0 flex flex-col items-end gap-1">
+                                      <span className="text-xs font-medium capitalize">{h.verdict}</span>
+                                      <span className="text-xs opacity-60">{Math.round(h.confidence * 100)}%</span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Analyst feedback card */}
+                        {state.humanFeedback && (
+                          <div className="rounded-xl border border-violet-500/25 bg-violet-500/5 px-4 py-3 flex items-start gap-3">
+                            <span className="text-violet-400 text-xs mt-0.5 shrink-0">✎</span>
+                            <div>
+                              <p className="text-xs text-violet-300 font-medium mb-1">Analyst feedback applied</p>
+                              <p className="text-xs text-zinc-400 leading-relaxed">{state.humanFeedback}</p>
+                            </div>
+                          </div>
+                        )}
+
                         <p className="text-xs text-zinc-600 uppercase tracking-wide">Investigation Report</p>
-                        <ReportView report={state.report} queryCount={state.queriesExecuted} />
+                        <ReportView report={state.report} queryCount={state.queriesExecuted} queryHistory={state.queryHistory} />
                       </div>
                     )}
 

@@ -13,6 +13,10 @@ dist/
 data/connections.db
 data/.hermes_key
 data/hermes.duckdb
+data/history.db
+data/checkpoints.db
+data/checkpoints.db-shm
+data/checkpoints.db-wal
 
 # macOS
 .DS_Store

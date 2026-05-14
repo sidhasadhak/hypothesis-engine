@@ -35,7 +35,10 @@ MAX_ITER = int(__import__("os").getenv("HERMES_MAX_ITER", "6"))
 # ── Node: decompose_question ─────────────────────────────────────────────────
 
 def decompose_question(state: AgentState) -> dict[str, Any]:
-    llm = get_provider()
+    from hermes.tools.prior_analyses import search_prior_investigations
+    prior_analyses = search_prior_investigations(state["question"])
+
+    llm = get_provider("coder")
     output: DecomposeOutput = llm.complete(
         system="You are a senior data analyst. Decompose the question into testable hypotheses.",
         user=DECOMPOSE_PROMPT.format(
@@ -49,6 +52,7 @@ def decompose_question(state: AgentState) -> dict[str, Any]:
         "current_hypothesis_idx": 0,
         "iteration": 0,
         "pitfalls": [],
+        "prior_analyses": prior_analyses,
     }
 
 
@@ -65,14 +69,26 @@ def plan_and_execute(state: AgentState, conn: "DatabaseConnection") -> dict[str,
     prior_context = _format_prior_context(state.get("query_history", []))
     known_pitfalls = state.get("pitfalls", [])
 
-    llm = get_provider()
+    # Retrieve only schema tables relevant to this hypothesis (no-op for small schemas)
+    from hermes.semantic.retriever import retrieve_relevant_schema
+    schema_for_hypothesis = retrieve_relevant_schema(h.description, state["schema_context"])
+
+    # Prepend any relevant prior investigation summaries
+    prior_analyses = state.get("prior_analyses", [])
+    prior_analyses_text = (
+        "RELEVANT PAST INVESTIGATIONS:\n" + "\n\n".join(prior_analyses)
+        if prior_analyses else ""
+    )
+
+    llm = get_provider("coder")
     plan: QueryPlan = llm.complete(
         system="You are a senior data analyst writing SQL to test a hypothesis.",
         user=PLAN_QUERIES_PROMPT.format(
             hypothesis_id=h.id,
             hypothesis_description=h.description,
-            schema=state["schema_context"],
+            schema=schema_for_hypothesis,
             prior_context=prior_context or "None yet.",
+            prior_analyses_section=prior_analyses_text,
             pitfall_section=format_pitfall_section(known_pitfalls),
         ),
         response_model=QueryPlan,
@@ -86,7 +102,7 @@ def plan_and_execute(state: AgentState, conn: "DatabaseConnection") -> dict[str,
 
         # ── Self-correction: retry failed queries once ────────────────────
         if result.error:
-            fix: SQLFix = llm.complete(
+            fix: SQLFix = get_provider("coder").complete(
                 system="You are a SQL expert. Fix the broken query.",
                 user=FIX_SQL_PROMPT.format(
                     dialect=conn.dialect,
@@ -152,7 +168,7 @@ def score_evidence(state: AgentState) -> dict[str, Any]:
         )
     else:
         formatted = "\n\n".join(format_result_for_llm(r) for r in hyp_results)
-        llm = get_provider()
+        llm = get_provider("coder")
         score: EvidenceScore = llm.complete(
             system="You are a senior data analyst evaluating evidence for a hypothesis.",
             user=SCORE_EVIDENCE_PROMPT.format(
@@ -186,7 +202,12 @@ def score_evidence(state: AgentState) -> dict[str, Any]:
 
 def synthesize_report(state: AgentState) -> dict[str, Any]:
     pitfalls = state.get("pitfalls", [])
-    llm = get_provider()
+    human_feedback = state.get("human_feedback") or ""
+    feedback_section = (
+        f"\nANALYST FEEDBACK (incorporate this before finalising the report):\n{human_feedback}\n"
+        if human_feedback else ""
+    )
+    llm = get_provider("narrator")
     report: AnalysisReport = llm.complete(
         system="You are a senior data analyst writing an executive-level investigation report.",
         user=SYNTHESIZE_PROMPT.format(
@@ -194,6 +215,7 @@ def synthesize_report(state: AgentState) -> dict[str, Any]:
             hypothesis_summary=_format_hypothesis_summary(state["hypotheses"]),
             evidence_log=_format_full_evidence(state.get("query_history", [])),
             pitfall_section=_format_pitfalls_for_synthesis(pitfalls),
+            human_feedback_section=feedback_section,
         ),
         response_model=AnalysisReport,
     )
