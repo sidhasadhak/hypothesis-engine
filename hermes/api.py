@@ -39,7 +39,7 @@ from hermes.db.registry import (
 from hermes.semantic.glossary import load_glossary, update_column, update_table
 from hermes.tools.schema import build_schema_context
 
-app = FastAPI(title="Hermes API")
+app = FastAPI(title="Aughor API")
 
 app.add_middleware(
     CORSMiddleware,

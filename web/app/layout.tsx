@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Hermes — Autonomous Data Analyst",
+  title: "Aughor — Autonomous Data Analyst",
   description: "Investigates business questions autonomously",
 };
 

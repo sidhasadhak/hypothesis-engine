@@ -1,6 +1,6 @@
-# Hermes — Feature Reference
+# Aughor — Feature Reference
 
-**Product:** TalonSight / Hermes Autonomous Analyst  
+**Product:** Aughor — Autonomous Analyst  
 **Purpose of this document:** A living record of every major feature — what it does, why it exists, how it works, how it connects to the rest of the system, and what technology powers it. Intended as source material for product pitches, investor demos, and onboarding.
 
 ---
@@ -29,10 +29,10 @@
 ## 1. Autonomous Investigative Loop
 
 ### What
-Hermes answers a business question by autonomously forming hypotheses, writing and executing SQL to test each one, scoring the evidence, and synthesising a structured narrative report — without any manual query writing.
+Aughor answers a business question by autonomously forming hypotheses, writing and executing SQL to test each one, scoring the evidence, and synthesising a structured narrative report — without any manual query writing.
 
 ### Why
-Traditional analytics requires an analyst to know what to look for before they start. Hermes inverts this: it generates the hypotheses itself, pursues the most promising ones, and eliminates dead ends. A question like *"Why did revenue drop 8% last week?"* produces a full root-cause investigation in minutes, not hours.
+Traditional analytics requires an analyst to know what to look for before they start. Aughor inverts this: it generates the hypotheses itself, pursues the most promising ones, and eliminates dead ends. A question like *"Why did revenue drop 8% last week?"* produces a full root-cause investigation in minutes, not hours.
 
 ### How
 The investigative loop is a cyclic LangGraph `StateGraph` with four nodes:
@@ -64,7 +64,7 @@ The loop continues until all hypotheses are tested or the iteration cap (`HERMES
 ## 2. SQL Self-Correction
 
 ### What
-When a generated SQL query fails, Hermes automatically rewrites it, retries, and logs what it learned — so the same mistake is never repeated in the same investigation.
+When a generated SQL query fails, Aughor automatically rewrites it, retries, and logs what it learned — so the same mistake is never repeated in the same investigation.
 
 ### Why
 LLMs frequently generate SQL with subtle dialect errors (e.g. Postgres date arithmetic, type casting). Without self-correction, a single bad query kills an entire hypothesis branch. With it, the agent recovers silently and becomes smarter within the session.
@@ -93,7 +93,7 @@ LLMs frequently generate SQL with subtle dialect errors (e.g. Postgres date arit
 Every SQL query result is automatically analysed for anomalies, trends, and statistical significance. A σ (sigma) badge is attached to each finding so the agent — and the user — knows which observations are statistically meaningful vs. noise.
 
 ### Why
-A revenue number is just a number without context. A 12% drop is very different depending on whether it's a 3σ anomaly or normal weekly variance. Hermes makes this judgment automatically so the narrative report leads with the highest-signal findings.
+A revenue number is just a number without context. A 12% drop is very different depending on whether it's a 3σ anomaly or normal weekly variance. Aughor makes this judgment automatically so the narrative report leads with the highest-signal findings.
 
 ### How
 `hermes/tools/stats.py` runs `analyze_query_result()` on every successful `QueryResult`. It detects the column types and applies:
@@ -121,10 +121,10 @@ The results are attached as `stats: list[StatResult]` on the `QueryResult` and s
 ## 4. Multi-Database Connections
 
 ### What
-Hermes connects to any combination of DuckDB (local files) and PostgreSQL databases. Credentials are stored encrypted. Connections can be added, tested, and removed from the UI.
+Aughor connects to any combination of DuckDB (local files) and PostgreSQL databases. Credentials are stored encrypted. Connections can be added, tested, and removed from the UI.
 
 ### Why
-Data lives everywhere — local analytical files, staging Postgres, production warehouses. Hermes needs to work against any of them without code changes, and without storing credentials in plaintext.
+Data lives everywhere — local analytical files, staging Postgres, production warehouses. Aughor needs to work against any of them without code changes, and without storing credentials in plaintext.
 
 ### How
 `hermes/db/connection.py` defines a `DatabaseConnection` abstract base with two implementations:
@@ -285,10 +285,10 @@ The process is idempotent — once a table is seeded, it's never re-seeded unles
 ## 9. dbt Integration
 
 ### What
-If you run `dbt docs generate`, Hermes can read your `manifest.json` and optional `catalog.json` to automatically import all your dbt model descriptions, column definitions, and source metadata into its semantic layer.
+If you run `dbt docs generate`, Aughor can read your `manifest.json` and optional `catalog.json` to automatically import all your dbt model descriptions, column definitions, and source metadata into its semantic layer.
 
 ### Why
-Most data teams have already encoded metric definitions in dbt — `MRR`, `CAC`, `activated_users` are defined once and trusted. Hermes re-using these definitions instead of re-deriving them solves the "three different numbers from three people" problem and prevents hallucinated metric definitions.
+Most data teams have already encoded metric definitions in dbt — `MRR`, `CAC`, `activated_users` are defined once and trusted. Aughor re-using these definitions instead of re-deriving them solves the "three different numbers from three people" problem and prevents hallucinated metric definitions.
 
 ### How
 `hermes/semantic/dbt.py` parses `manifest.json` to extract model and source nodes, their descriptions, and column-level annotations. It optionally reads `catalog.json` for additional type and comment enrichment. Key rules:
@@ -312,7 +312,7 @@ Enabled via `HERMES_DBT_MANIFEST=/path/to/target/manifest.json`. Silently skippe
 ## 10. Vector Search over Schema
 
 ### What
-For large databases (> 12 tables), Hermes embeds table and column descriptions into a vector store and retrieves only the top-5 most relevant tables for each hypothesis — instead of dumping the full schema into the LLM context window.
+For large databases (> 12 tables), Aughor embeds table and column descriptions into a vector store and retrieves only the top-5 most relevant tables for each hypothesis — instead of dumping the full schema into the LLM context window.
 
 ### Why
 A schema with 50+ tables can easily exceed 8–16k tokens. Dumping it all into every prompt is expensive, slow, and degrades reasoning quality (the LLM pays equal attention to `dim_product_category` and `fact_revenue`). Semantic retrieval focuses the agent on the tables that actually matter for the question being investigated.
@@ -372,7 +372,7 @@ Backfill endpoint: `POST /investigations/reindex` re-indexes all completed histo
 ## 12. Two-Model Architecture
 
 ### What
-Hermes uses two separate LLMs simultaneously: a "coder" model optimised for SQL and structured reasoning, and a "narrator" model optimised for prose. Each node in the investigative loop calls the appropriate model for its job.
+Aughor uses two separate LLMs simultaneously: a "coder" model optimised for SQL and structured reasoning, and a "narrator" model optimised for prose. Each node in the investigative loop calls the appropriate model for its job.
 
 ### Why
 SQL generation and narrative writing are fundamentally different tasks. A model like `qwen2.5-coder:32b` is exceptional at structured reasoning and SQL but produces mediocre prose. `llama3.3:70b` produces excellent narrative but is overkill for schema analysis. Specialising models per job improves both quality and cost.
@@ -437,7 +437,7 @@ Only `complete_investigation()` indexes in Qdrant — partial results from `time
 An optional mode where the agent pauses after testing all hypotheses but before writing the final report. The user sees all hypothesis verdicts, can add context or redirect the analysis, and then triggers final synthesis. The analyst's feedback is injected directly into the synthesis prompt.
 
 ### Why
-For high-stakes investigations — revenue root cause, compliance anomalies, board-deck numbers — an analyst may need to validate the agent's interpretation before it commits to a narrative. They may know that "H3 is wrong because the Nov promo was planned" or "focus on APAC only, EU numbers are expected." This feature makes Hermes a collaborative tool rather than a black box.
+For high-stakes investigations — revenue root cause, compliance anomalies, board-deck numbers — an analyst may need to validate the agent's interpretation before it commits to a narrative. They may know that "H3 is wrong because the Nov promo was planned" or "focus on APAC only, EU numbers are expected." This feature makes Aughor a collaborative tool rather than a black box.
 
 ### How
 **Backend:**
@@ -511,7 +511,7 @@ The quality of the underlying analysis is only valuable if users can read, trust
 A UI panel for adding, testing, and removing database connections at runtime — no config file edits or restarts required. Each connection is validated against the live database before being saved.
 
 ### Why
-Hermes is a multi-database tool. The connection manager makes it accessible to non-engineers who shouldn't need to touch `.env` files or restart a service to point the agent at a new database.
+Aughor is a multi-database tool. The connection manager makes it accessible to non-engineers who shouldn't need to touch `.env` files or restart a service to point the agent at a new database.
 
 ### How
 `ConnectionsPanel.tsx` provides a form for name + type (DuckDB / Postgres) + DSN. On submit:

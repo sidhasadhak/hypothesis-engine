@@ -46,7 +46,7 @@ export default function Home() {
       {/* Header */}
       <header className="border-b border-zinc-800 px-6 py-3 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
-          <span className="text-base font-semibold tracking-tight">Hermes</span>
+          <span className="text-base font-semibold tracking-tight">Aughor</span>
           <span className="text-xs text-zinc-500 border border-zinc-700 rounded px-2 py-0.5">
             Autonomous Analyst
           </span>
@@ -214,7 +214,7 @@ export default function Home() {
                 <div className="flex-1 flex flex-col items-center justify-center gap-4 text-center px-8">
                   <p className="text-3xl font-semibold text-zinc-700">Ask anything.</p>
                   <p className="text-sm text-zinc-600 max-w-sm">
-                    Hermes investigates business questions autonomously — forming hypotheses,
+                    Aughor investigates business questions autonomously — forming hypotheses,
                     running SQL, and delivering a narrative verdict.
                   </p>
                   <button

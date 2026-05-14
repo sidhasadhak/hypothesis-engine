@@ -1,5 +1,5 @@
 """
-Hermes CLI — run autonomous investigations from the terminal.
+Aughor CLI — run autonomous investigations from the terminal.
 
 Usage:
   hermes investigate "Why did revenue drop 8% last week?"
@@ -35,7 +35,7 @@ DEFAULT_DB = Path(__file__).parent.parent / "data" / "hermes.duckdb"
 
 @click.group()
 def cli():
-    """Hermes — Autonomous Data Analyst"""
+    """Aughor — Autonomous Data Analyst"""
 
 
 # ── Seed ─────────────────────────────────────────────────────────────────────
@@ -76,7 +76,7 @@ def investigate(question: str, db: str, model: Optional[str], backend: str):
     console.print()
     console.print(Panel(
         f"[bold white]{question}[/bold white]",
-        title="[bold cyan]Hermes Investigation[/bold cyan]",
+        title="[bold cyan]Aughor Investigation[/bold cyan]",
         border_style="cyan",
         padding=(1, 2),
     ))

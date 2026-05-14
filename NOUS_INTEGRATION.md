@@ -1,20 +1,20 @@
-# Hermes × Nous Hermes Agent — Integration Architecture
+# Aughor × Nous Hermes Agent — Integration Architecture
 
 ## The Core Idea
 
-Our Hermes is the **analytical engine** — it investigates business questions, runs SQL, scores evidence, and produces structured reports. Nous Hermes Agent is the **operating layer** — it schedules work, accumulates memory across sessions, communicates across channels, learns from patterns, and orchestrates a multi-agent hierarchy.
+Our Aughor is the **analytical engine** — it investigates business questions, runs SQL, scores evidence, and produces structured reports. Nous Hermes Agent is the **operating layer** — it schedules work, accumulates memory across sessions, communicates across channels, learns from patterns, and orchestrates a multi-agent hierarchy.
 
-Neither replaces the other. Hermes does the deep analytical thinking. Nous Hermes Agent is the nervous system that surrounds it.
+Neither replaces the other. Aughor does the deep analytical thinking. Nous Hermes Agent is the nervous system that surrounds it.
 
 ---
 
 ## How They Connect: The MCP Bridge
 
-Every integration in this architecture flows through a single foundational piece: **Hermes exposed as an MCP server**.
+Every integration in this architecture flows through a single foundational piece: **Aughor exposed as an MCP server**.
 
-Nous Hermes Agent supports bidirectional MCP — it can consume tools from any MCP-compatible server, and each tool becomes callable as `mcp_<server_name>_<tool_name>` natively in any agent session. Once Hermes is an MCP server, every Nous Hermes Agent instance in the hierarchy — org level and analyst level alike — can invoke investigations, read history, and update the semantic layer as naturally as calling any other tool.
+Nous Hermes Agent supports bidirectional MCP — it can consume tools from any MCP-compatible server, and each tool becomes callable as `mcp_<server_name>_<tool_name>` natively in any agent session. Once Aughor is an MCP server, every Nous Hermes Agent instance in the hierarchy — org level and analyst level alike — can invoke investigations, read history, and update the semantic layer as naturally as calling any other tool.
 
-**MCP tools Hermes exposes:**
+**MCP tools Aughor exposes:**
 
 | Tool | What it does |
 |---|---|
@@ -45,7 +45,7 @@ This is the only infrastructure piece that needs to be built. Everything else in
 │  • Publishes shared intelligence downward to analyst agents              │
 │  • Receives incremental findings upward from analyst agents              │
 │  • Collects HITL trajectories for RL training                            │
-│  • Full access to all Hermes connections                                 │
+│  • Full access to all Aughor connections                                 │
 │                                                                          │
 │  Tools: hermes_investigate, hermes_update_glossary, hermes_reindex,      │
 │         hermes_search_investigations, hermes_list_investigations         │
@@ -107,7 +107,7 @@ You are the analytical backbone of this organisation.
 You do not answer ad-hoc questions. Your job is continuous:
 scan, detect, accumulate, and broadcast.
 
-You have full access to all data connections via the Hermes
+You have full access to all data connections via the Aughor
 investigation tool. You are the only agent authorised to
 confirm glossary changes and trigger reindexing.
 
@@ -238,7 +238,7 @@ Agent: [calls mcp_hermes_investigate with the question]
 ```
 
 **Use HITL as a domain bridge:**
-The analyst agent is itself a domain expert proxy. When Hermes pauses for HITL feedback, the analyst agent prepares the feedback using its SOUL.md domain lens — e.g. the finance agent knows that a revenue drop in the last week of the quarter is likely a booking timing artifact, not a real decline. It calls `hermes_submit_feedback` with that context before the user even needs to type it.
+The analyst agent is itself a domain expert proxy. When Aughor pauses for HITL feedback, the analyst agent prepares the feedback using its SOUL.md domain lens — e.g. the finance agent knows that a revenue drop in the last week of the quarter is likely a booking timing artifact, not a real decline. It calls `hermes_submit_feedback` with that context before the user even needs to type it.
 
 In practice: the agent presents the paused hypothesis verdicts to the analyst, offers a domain-informed interpretation, and either sends it automatically (if confidence is high from SOUL.md + org snapshot) or asks the analyst to confirm before submitting.
 
@@ -337,7 +337,7 @@ This is where the architecture earns its compound returns. Each cycle makes the 
 ```
 
 **What improves each cycle:**
-- Hermes's glossary gets richer → SQL generation gets more accurate → fewer self-corrections → faster investigations
+- Aughor's glossary gets richer → SQL generation gets more accurate → fewer self-corrections → faster investigations
 - Org agent's MEMORY.md gets denser → analyst agents skip known patterns → fewer redundant investigations → Prior Analyses RAG cache hit rate increases
 - HITL trajectories accumulate → RL training → coder/narrator models improve on your domain → HITL needed less often
 - Analyst skills library grows → common investigation types run in one command with all context pre-loaded
@@ -362,7 +362,7 @@ hermes cron: "Every Monday 08:00, deliver weekly KPI sweep summary to
 **Alert mode (watchdog pattern):**
 ```
 hermes cron: daily 07:00, no_agent=True
-Script: query Hermes for last 24h anomalies
+Script: query Aughor for last 24h anomalies
         empty output → silent tick
         anomaly found → trigger hermes_investigate → deliver to #alerts
 ```
@@ -380,7 +380,7 @@ In order of dependency:
 
 | # | What | Where | Unlocks |
 |---|---|---|---|
-| 1 | MCP server wrapper around Hermes FastAPI | `hermes/mcp_server.py` | Everything — the foundational piece |
+| 1 | MCP server wrapper around Aughor FastAPI | `hermes/mcp_server.py` | Everything — the foundational piece |
 | 2 | Org agent SOUL.md + config + cron jobs | Nous Hermes config files | Scheduled sweeps, org memory accumulation |
 | 3 | Analyst agent SOUL.md templates (per domain) | Nous Hermes config files | On-demand investigations, HITL proxy, channel delivery |
 | 4 | FLAG_FOR_ORG hook (HOOK.yaml + handler.py) | `~/.hermes/hooks/` | Analyst → org agent correction flow |
@@ -409,4 +409,4 @@ The org agent's MEMORY.md reads like a seasoned analyst's mental model of the co
 
 ---
 
-*This document describes the integration architecture between Hermes (autonomous data analyst) and Nous Hermes Agent (multi-agent operating layer). Implementation starts with the MCP server wrapper — see `ROADMAP.md` for sequencing.*
+*This document describes the integration architecture between Aughor (autonomous data analyst) and Nous Hermes Agent (multi-agent operating layer). Implementation starts with the MCP server wrapper — see `ROADMAP.md` for sequencing.*

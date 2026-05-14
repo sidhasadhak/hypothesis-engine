@@ -1,6 +1,6 @@
-# Hermes — Product Roadmap
+# Aughor — Product Roadmap
 
-**Product:** TalonSight / Hermes Autonomous Analyst  
+**Product:** Aughor — Autonomous Analyst  
 **Repo:** https://github.com/sidhasadhak/hypothesis-engine  
 **Stack snapshot:** LangGraph · Ollama (qwen3-coder-next:cloud) · FastAPI SSE · Next.js (App Router) · DuckDB + PostgreSQL · SQLGlot · scipy/statsmodels · uv
 
@@ -336,7 +336,7 @@ HERMES_CLOUD_MODEL=claude-sonnet-4-6
 ---
 
 ## Milestone 6 — Security & Privacy
-**Goal:** Make Hermes safe for enterprise data — PII never reaches the LLM, queries are sandboxed, every execution is audited, and credentials are vault-managed.
+**Goal:** Make Aughor safe for enterprise data — PII never reaches the LLM, queries are sandboxed, every execution is audited, and credentials are vault-managed.
 
 ### Phase 6a — PII Detection with Microsoft Presidio
 **What:** Scan every query result through **Microsoft Presidio** before it enters the LLM context. If a result contains emails, SSNs, phone numbers, or other PII, redact the values and inject a note instead: `"[REDACTED: 3 email addresses detected in result]"`.
