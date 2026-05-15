@@ -11,16 +11,18 @@ interface Props {
 
 type ChartType = "timeseries" | "bar" | null;
 
-const DATE_PATTERN = /date|month|week|day|period|year|time|_at$/i;
+// Only match columns that are genuinely date/time typed — not integer year/month columns
+const DATE_PATTERN = /_date$|_at$|_time$|created_at|updated_at|timestamp/i;
+// Prefer these as the value axis in bar charts
+const SHARE_PATTERN = /share|pct|percent|rate|ratio|proportion/i;
 const SKIP_NUMERIC_NAMES = /id$/i;
 
 function detectChart(columns: string[], rows: unknown[][]): {
   type: ChartType;
   xCol: number;
   yCol: number;
-  labelCol?: number;
 } | null {
-  if (!columns.length || rows.length < 2) return null;
+  if (!columns.length || rows.length < 3) return null;
 
   const sample = rows.slice(0, 10);
 
@@ -28,23 +30,26 @@ function detectChart(columns: string[], rows: unknown[][]): {
     !SKIP_NUMERIC_NAMES.test(columns[idx]) &&
     sample.every(r => r[idx] !== null && r[idx] !== "" && !isNaN(Number(r[idx])));
 
-  const isDate = (idx: number) =>
-    DATE_PATTERN.test(columns[idx]) ||
-    sample.every(r => typeof r[idx] === "string" && !isNaN(Date.parse(r[idx] as string)));
+  const isDate = (idx: number) => DATE_PATTERN.test(columns[idx]);
 
   const isCategory = (idx: number) =>
     !isNumeric(idx) && !isDate(idx) && typeof sample[0]?.[idx] === "string";
 
   const dateIdx = columns.findIndex((_, i) => isDate(i));
   const numericCols = columns.map((_, i) => i).filter(isNumeric);
-  const catIdx = columns.findIndex((_, i) => !isNumeric(i) && !isDate(i) && isCategory(i));
+  const catIdx = columns.findIndex((_, i) => isCategory(i));
 
-  if (dateIdx >= 0 && numericCols.length > 0) {
+  if (dateIdx >= 0 && numericCols.length > 0 && numericCols[0] !== dateIdx) {
     return { type: "timeseries", xCol: dateIdx, yCol: numericCols[0] };
   }
+
   if (catIdx >= 0 && numericCols.length > 0) {
-    return { type: "bar", xCol: numericCols[0], yCol: catIdx };
+    // Prefer share/rate/percent columns as the value axis
+    const shareColIdx = numericCols.find(i => SHARE_PATTERN.test(columns[i]));
+    const valueColIdx = shareColIdx ?? numericCols[numericCols.length - 1];
+    return { type: "bar", xCol: valueColIdx, yCol: catIdx };
   }
+
   return null;
 }
 
@@ -52,6 +57,14 @@ function rowsToObjects(columns: string[], rows: unknown[][]): Record<string, unk
   return rows.map(row =>
     Object.fromEntries(columns.map((col, i) => [col, row[i]]))
   );
+}
+
+function isPercentageColumn(colName: string, data: Record<string, unknown>[]): boolean {
+  if (!SHARE_PATTERN.test(colName)) return false;
+  return data.every(d => {
+    const v = Number(d[colName]);
+    return !isNaN(v) && v >= 0 && v <= 1;
+  });
 }
 
 export function InvestigationChart({ columns, rows, title }: Props) {
@@ -94,19 +107,38 @@ export function InvestigationChart({ columns, rows, title }: Props) {
     if (detected.type === "bar") {
       const labelKey = columns[detected.yCol];
       const valueKey = columns[detected.xCol];
-      const sorted = [...data].sort((a, b) => Number(b[valueKey]) - Number(a[valueKey])).slice(0, 20);
+      // Aggregate per category: average for share/rate columns, sum for counts/amounts
+      const aggSum = new Map<string, number>();
+      const aggCnt = new Map<string, number>();
+      for (const d of data) {
+        const label = String(d[labelKey]);
+        aggSum.set(label, (aggSum.get(label) ?? 0) + Number(d[valueKey]));
+        aggCnt.set(label, (aggCnt.get(label) ?? 0) + 1);
+      }
+      const useAvg = SHARE_PATTERN.test(valueKey);
+      const aggregated = Array.from(aggSum.entries()).map(([label, sum]) => ({
+        label,
+        value: useAvg ? sum / (aggCnt.get(label) ?? 1) : sum,
+      }));
+      const sorted = aggregated.sort((a, b) => b.value - a.value).slice(0, 15);
+
+      const isPct = isPercentageColumn(valueKey, data);
+      const xTickFormat = isPct
+        ? (v: number) => `${(v * 100).toFixed(1)}%`
+        : (v: number) => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : v >= 1_000 ? `${(v / 1_000).toFixed(0)}k` : String(v);
+
       plot = Plot.plot({
         style: { background: "transparent", color: "#71717a", fontSize: "11px" },
         width: containerRef.current.offsetWidth || 480,
-        height: Math.max(120, sorted.length * 22 + 40),
-        marginLeft: 120,
+        height: Math.max(120, sorted.length * 26 + 40),
+        marginLeft: 130,
         marginBottom: 32,
-        x: { label: valueKey, grid: true, tickFormat: (v: number) => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : v >= 1_000 ? `${(v / 1_000).toFixed(0)}k` : String(v) },
+        x: { label: valueKey.replace(/_/g, " "), grid: true, tickFormat: xTickFormat },
         y: { label: null },
         marks: [
           Plot.barX(sorted, {
-            x: valueKey,
-            y: labelKey,
+            x: "value",
+            y: "label",
             sort: { y: "-x" },
             fill: "#34d399",
             fillOpacity: 0.7,

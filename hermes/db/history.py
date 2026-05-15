@@ -79,8 +79,9 @@ def complete_investigation(
     hypotheses: list,
     query_history: list,
     question: str = "",
+    skip_index: bool = False,
 ) -> None:
-    """Persist the final state and index in Qdrant. Only called on clean completion."""
+    """Persist the final state and optionally index in Qdrant. Only called on clean completion."""
     report_dict = report.model_dump() if hasattr(report, "model_dump") else report
     hypotheses_list = [h.model_dump() if hasattr(h, "model_dump") else h for h in hypotheses]
     queries_list = [q.model_dump() if hasattr(q, "model_dump") else q for q in query_history]
@@ -111,8 +112,8 @@ def complete_investigation(
     c.commit()
     c.close()
 
-    # Index in Qdrant — only for fully completed investigations
-    if report_dict:
+    # Index in Qdrant — only for investigate-mode completions (not direct queries)
+    if report_dict and not skip_index:
         key_findings = [f.get("claim", "") for f in (report_dict.get("key_findings") or [])]
         from hermes.tools.prior_analyses import index_investigation
         index_investigation(inv_id, question=question, headline=headline, key_findings=key_findings)

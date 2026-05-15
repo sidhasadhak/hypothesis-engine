@@ -21,20 +21,21 @@ const VERDICT_COLOR: Record<Verdict, string> = {
 };
 
 function deriveSteps(state: InvestigationState): Step[] {
-  const { queryMode, hypotheses, status, queriesExecuted } = state;
+  const { queryMode, hypotheses, status, queriesExecuted, routeReasoning, routeConfidence } = state;
   const isRunning = status === "running";
   const isDone = status === "done" || status === "paused";
   const steps: Step[] = [];
 
   // Route
   const routeDone = queryMode !== null;
+  const confidenceLabel = routeConfidence != null ? ` · ${Math.round(routeConfidence * 100)}% confidence` : "";
   steps.push({
     id: "route",
     label: routeDone
       ? queryMode === "direct" ? "Direct Query" : "Investigation"
       : "Classifying question…",
     sublabel: routeDone
-      ? queryMode === "direct" ? "Single-pass answer" : "Multi-hypothesis analysis"
+      ? (routeReasoning ?? (queryMode === "direct" ? "Single-pass answer" : "Multi-hypothesis analysis")) + confidenceLabel
       : undefined,
     status: routeDone ? "done" : "running",
   });

@@ -240,7 +240,7 @@ export default function Home() {
                     {state.queryMode !== "direct" && state.hypotheses.length > 0 && (
                       <div className="space-y-3">
                         <p className="text-xs text-zinc-600 uppercase tracking-wide">
-                          Hypotheses — {state.hypotheses.filter(h => h.verdict !== "untested").length} of {state.hypotheses.length} tested
+                          Supportive Evidences — {state.hypotheses.filter(h => h.verdict !== "untested").length} of {state.hypotheses.length} tested
                         </p>
                         {state.hypotheses.map((h, i) => (
                           <HypothesisCard

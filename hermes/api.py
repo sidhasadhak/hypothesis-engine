@@ -73,6 +73,34 @@ def _sse(event_type: str, data: dict) -> str:
     return f"data: {json.dumps({'type': event_type, **data})}\n\n"
 
 
+import re as _re
+_DIRECT_SIGNALS = _re.compile(
+    r'\b(show|list|what is|what are|what was|what were|how many|how much|'
+    r'top \d|top\d|give me|fetch|get me|display|count|sum|total|average|avg|'
+    r'breakdown|share of|distribution of|calculate|find|return)\b',
+    _re.IGNORECASE,
+)
+_INVESTIGATE_SIGNALS = _re.compile(
+    r'\b(why|cause|caused|causing|driver|drivers|reason|explain|diagnose|'
+    r'investigate|what changed|what.s behind|contributing|anomaly|spike|drop|decline|surge)\b',
+    _re.IGNORECASE,
+)
+
+def _looks_direct(question: str) -> bool:
+    """
+    Lightweight pre-filter: returns True if the question is likely a direct data
+    retrieval request (so the semantic cache should be skipped).
+    Errs on the side of skipping cache — false negatives (missed cache hits) are
+    acceptable; false positives (caching live data) are not.
+    """
+    has_investigate = bool(_INVESTIGATE_SIGNALS.search(question))
+    has_direct = bool(_DIRECT_SIGNALS.search(question))
+    # Definite investigate signals override direct signals
+    if has_investigate:
+        return False
+    return has_direct
+
+
 # ── Investigation endpoint ────────────────────────────────────────────────────
 
 async def _stream_investigation(question: str, connection_id: str, request: Request, hitl: bool = False) -> AsyncGenerator[str, None]:
@@ -89,10 +117,14 @@ async def _stream_investigation(question: str, connection_id: str, request: Requ
         yield _sse("error", {"message": f"Could not connect: {e}"})
         return
 
-    # ── Cache check: short-circuit if a very similar investigation exists ────────
+    # ── Cache check: only for investigate-type questions ─────────────────────────
+    # Direct queries fetch live data — cached results would be stale.
+    # We use the same keyword signals as the router prompt to pre-filter cheaply,
+    # without an extra LLM call. False-negatives (missed cache hits) are acceptable;
+    # false-positives (caching a direct query result) are not.
     from hermes.tools.prior_analyses import find_similar_investigation
     from hermes.db.history import get_investigation
-    cache_hit = find_similar_investigation(question)
+    cache_hit = None if _looks_direct(question) else find_similar_investigation(question)
     if cache_hit:
         cached_id, score = cache_hit
         cached = get_investigation(cached_id)
@@ -142,6 +174,8 @@ async def _stream_investigation(question: str, connection_id: str, request: Requ
             "hitl_enabled": hitl,
             "human_feedback": None,
             "query_mode": None,
+            "route_reasoning": None,
+            "route_confidence": None,
         }
 
         import time
@@ -178,6 +212,8 @@ async def _stream_investigation(question: str, connection_id: str, request: Requ
             if node_name == "route_question":
                 yield _sse("mode", {
                     "query_mode": merged.get("query_mode"),
+                    "route_reasoning": merged.get("route_reasoning"),
+                    "route_confidence": merged.get("route_confidence"),
                 })
 
             elif node_name == "decompose" and merged.get("hypotheses"):
@@ -228,13 +264,15 @@ async def _stream_investigation(question: str, connection_id: str, request: Requ
                     "investigation_id": inv_id,
                     "query_mode": merged.get("query_mode"),
                 })
-                # Persist + index (only on clean completion)
+                # Persist to history; skip Qdrant indexing for direct queries
+                # (live data changes — cached direct results would be stale)
                 complete_investigation(
                     inv_id,
                     report=merged["report"],
                     hypotheses=merged.get("hypotheses", []),
                     query_history=query_history,
                     question=question,
+                    skip_index=merged.get("query_mode") == "direct",
                 )
 
         # ── Post-loop: handle timeout ─────────────────────────────────────────

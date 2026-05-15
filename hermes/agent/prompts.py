@@ -1,24 +1,42 @@
 ROUTE_QUESTION_PROMPT = """\
-Classify this business question as either "direct" or "investigate".
+You are a routing classifier for an analytics agent.
+Classify the user's business question into one of two modes based on the TYPE OF REASONING required — not on how many SQL queries it might take.
 
 QUESTION: {question}
 
-Rules:
-- "direct": The answer can be obtained with 1-2 SQL queries and a clear summary. Examples:
-  - "What is our MRR this month?"
-  - "Show me the top 10 customers by revenue"
-  - "What's the conversion rate by channel last quarter?"
-  - "How many active subscriptions do we have?"
-  - "List churned customers in March"
+MODES:
 
-- "investigate": The question asks WHY something happened, requires comparing multiple hypotheses,
-  or involves diagnosing a problem. Examples:
-  - "Why did revenue drop 8% last week?"
-  - "What's causing the spike in churn?"
-  - "Investigate why APAC sales are underperforming"
-  - "What's behind the increase in support tickets?"
+1. "direct"
+   Use when the user primarily wants: facts, metrics, aggregations, rankings, comparisons, summaries, or filtered/sliced data.
+   The answer mainly involves RETRIEVING and PRESENTING information.
+   A question can require 5+ SQL queries and complex joins and still be "direct" — complexity does not determine the mode, intent does.
 
-Return mode and a one-sentence reasoning.
+2. "investigate"
+   Use when the user wants: explanations, root-cause analysis, diagnosis, hypothesis testing, anomaly investigation, or causal reasoning.
+   Use when the task requires interpreting WHY something happened, evaluating competing explanations, or identifying drivers behind an outcome.
+
+KEYWORD GUIDANCE (semantic hints, not strict rules):
+   Lean direct:      "what", "how much", "how many", "show", "list", "top", "compare", "breakdown", "summary", "trend"
+   Lean investigate: "why", "cause", "driver", "reason", "explain", "diagnose", "investigate", "what changed", "what's behind", "what's causing"
+
+BORDERLINE EXAMPLES:
+   Q: "Compare churn across pricing tiers"            → direct      (comparison/reporting, not causal)
+   Q: "Why is churn higher in enterprise?"            → investigate  (asks for explanation of cause)
+   Q: "Activation funnel by week"                     → direct      (aggregation/slice)
+   Q: "What changed in activation after the redesign?"→ investigate  (causal, implies anomaly)
+   Q: "Revenue by region this quarter"                → direct      (aggregation/slice)
+   Q: "What's behind the APAC revenue decline?"       → investigate  (diagnosis required)
+   Q: "How are renewals doing this quarter?"          → direct      (retrieval/reporting)
+   Q: "What's causing the renewal drop?"              → investigate  (root-cause)
+   Q: "Which segment is underperforming?"             → investigate  (implies diagnosis, not just ranking)
+   Q: "Top 10 customers by revenue"                   → direct      (ranking/retrieval)
+
+CONFIDENCE GUIDANCE:
+   Return confidence >= 0.75 only when the mode is unambiguous.
+   For gray-zone questions, set confidence < 0.65 — the system will default to "investigate" when confidence is low.
+   False-direct is worse than false-investigate: a missed hypothesis is recoverable, a shallow direct answer is not.
+
+Return: mode, confidence (0.0–1.0), and a one-sentence reasoning explaining the classification.
 """
 
 DECOMPOSE_PROMPT = """\
@@ -28,6 +46,8 @@ QUESTION: {question}
 
 AVAILABLE DATA (schema):
 {schema}
+
+{kb_domain_section}
 
 Your job is to decompose this question into 3-5 concrete, independently-testable hypotheses.
 Each hypothesis must be specific enough that a SQL query can confirm or refute it.
@@ -58,6 +78,7 @@ INVESTIGATION CONTEXT (queries already run this session):
 
 {prior_analyses_section}
 {pitfall_section}
+{kb_patterns_section}
 Write 1-3 SQL SELECT queries that together confirm or refute this hypothesis.
 Rules:
 - Only SELECT statements — no DDL, no DML
@@ -83,6 +104,7 @@ ERROR MESSAGE:
 SCHEMA:
 {schema}
 
+{kb_patterns_section}
 Fix the query for the target dialect. Common issues to watch for:
 - Date/time arithmetic: in Postgres use EXTRACT(EPOCH FROM (a - b))/86400 for day differences, not direct subtraction
 - NULL handling: wrap nullable columns with COALESCE or add IS NOT NULL filters

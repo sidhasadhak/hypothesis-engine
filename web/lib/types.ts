@@ -68,7 +68,7 @@ export interface EvidenceScore {
 // SSE event shapes
 export type InvestigationEvent =
   | { type: "start"; question: string; investigation_id?: string }
-  | { type: "mode"; query_mode: "direct" | "investigate" }
+  | { type: "mode"; query_mode: "direct" | "investigate"; route_reasoning?: string; route_confidence?: number }
   | { type: "hypotheses"; hypotheses: Hypothesis[] }
   | { type: "queries_executed"; iteration: number; hypothesis_idx: number; queries: QuerySummary[]; corrections: { fix_explanation: string; data_quality_issue: string | null }[]; stats: StatResult[] }
   | { type: "score"; iteration: number; score: { hypothesis_id: string; confidence: number; verdict: Verdict; key_finding: string }; hypotheses: Hypothesis[] }
@@ -105,4 +105,6 @@ export interface InvestigationState {
   cachedQuestion: string | null;
   humanFeedback: string | null;
   queryMode: "direct" | "investigate" | null;
+  routeReasoning: string | null;
+  routeConfidence: number | null;
 }

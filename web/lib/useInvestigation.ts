@@ -19,6 +19,8 @@ const initial: InvestigationState = {
   cachedQuestion: null,
   humanFeedback: null,
   queryMode: null,
+  routeReasoning: null,
+  routeConfidence: null,
 };
 
 type HistoricalInvestigation = {
@@ -76,6 +78,8 @@ function reducer(state: InvestigationState, action: Action): InvestigationState 
       return {
         ...state,
         queryMode: event.query_mode,
+        routeReasoning: event.route_reasoning ?? null,
+        routeConfidence: event.route_confidence ?? null,
         log: [...state.log, event.query_mode === "direct" ? "Direct query — fetching data…" : "Investigating — decomposing into hypotheses…"],
       };
 

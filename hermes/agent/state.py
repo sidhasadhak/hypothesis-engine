@@ -19,6 +19,7 @@ class Hypothesis(BaseModel):
 
 class RouteDecision(BaseModel):
     mode: Literal["direct", "investigate"]
+    confidence: float = Field(ge=0.0, le=1.0, description="Classification confidence (0–1)")
     reasoning: str = Field(description="One sentence explaining the classification")
 
 
@@ -90,6 +91,10 @@ class Pitfall(BaseModel):
         default=None,
         description="If the error reveals a data quality problem (NULLs, bad types, missing values), describe it. Otherwise null."
     )
+    retry_error: Optional[str] = Field(
+        default=None,
+        description="If the auto-corrected query also failed, the error from the retry. None if the fix succeeded."
+    )
 
 
 class SQLFix(BaseModel):
@@ -153,3 +158,5 @@ class AgentState(TypedDict):
 
     # Routing: set by route_question node; None until classified
     query_mode: Optional[Literal["direct", "investigate"]]
+    route_reasoning: Optional[str]
+    route_confidence: Optional[float]

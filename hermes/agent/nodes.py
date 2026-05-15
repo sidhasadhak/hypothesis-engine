@@ -18,6 +18,7 @@ from hermes.agent.prompts import (
 from hermes.agent.state import (
     AgentState,
     AnalysisReport,
+    DataQualityNote,
     DecomposeOutput,
     EvidenceScore,
     Hypothesis,
@@ -43,8 +44,13 @@ def route_question(state: AgentState) -> dict[str, Any]:
         user=ROUTE_QUESTION_PROMPT.format(question=state["question"]),
         response_model=RouteDecision,
     )
-    if decision.mode == "direct":
+    # Low-confidence direct classifications fall back to investigate —
+    # false-direct (shallow answer) is worse than false-investigate (extra thoroughness)
+    effective_mode = decision.mode if decision.confidence >= 0.65 else "investigate"
+    base = {"route_reasoning": decision.reasoning, "route_confidence": decision.confidence}
+    if effective_mode == "direct":
         return {
+            **base,
             "query_mode": "direct",
             "hypotheses": [Hypothesis(id="direct", description=state["question"], confidence=0.0, verdict="untested")],
             "current_hypothesis_idx": 0,
@@ -52,7 +58,7 @@ def route_question(state: AgentState) -> dict[str, Any]:
             "pitfalls": [],
             "prior_analyses": [],
         }
-    return {"query_mode": "investigate"}
+    return {**base, "query_mode": "investigate"}
 
 
 def route_after_classify(state: AgentState) -> str:
@@ -63,7 +69,9 @@ def route_after_classify(state: AgentState) -> str:
 
 def decompose_question(state: AgentState) -> dict[str, Any]:
     from hermes.tools.prior_analyses import search_prior_investigations
+    from hermes.semantic.kb_retriever import retrieve_for_decompose
     prior_analyses = search_prior_investigations(state["question"])
+    kb_domain = retrieve_for_decompose(state["question"])
 
     llm = get_provider("coder")
     output: DecomposeOutput = llm.complete(
@@ -71,6 +79,7 @@ def decompose_question(state: AgentState) -> dict[str, Any]:
         user=DECOMPOSE_PROMPT.format(
             question=state["question"],
             schema=state["schema_context"],
+            kb_domain_section=kb_domain,
         ),
         response_model=DecomposeOutput,
     )
@@ -98,7 +107,9 @@ def plan_and_execute(state: AgentState, conn: "DatabaseConnection") -> dict[str,
 
     # Retrieve only schema tables relevant to this hypothesis (no-op for small schemas)
     from hermes.semantic.retriever import retrieve_relevant_schema
+    from hermes.semantic.kb_retriever import retrieve_for_planning
     schema_for_hypothesis = retrieve_relevant_schema(h.description, state["schema_context"])
+    kb_patterns = retrieve_for_planning(h.description)
 
     # Prepend any relevant prior investigation summaries
     prior_analyses = state.get("prior_analyses", [])
@@ -117,6 +128,7 @@ def plan_and_execute(state: AgentState, conn: "DatabaseConnection") -> dict[str,
             prior_context=prior_context or "None yet.",
             prior_analyses_section=prior_analyses_text,
             pitfall_section=format_pitfall_section(known_pitfalls),
+            kb_patterns_section=kb_patterns,
         ),
         response_model=QueryPlan,
     )
@@ -129,13 +141,17 @@ def plan_and_execute(state: AgentState, conn: "DatabaseConnection") -> dict[str,
 
         # ── Self-correction: retry failed queries once ────────────────────
         if result.error:
+            original_error = result.error
+            from hermes.semantic.kb_retriever import retrieve_for_fix_sql
+            kb_fix_patterns = retrieve_for_fix_sql(original_error, sql)
             fix: SQLFix = get_provider("coder").complete(
                 system="You are a SQL expert. Fix the broken query.",
                 user=FIX_SQL_PROMPT.format(
                     dialect=conn.dialect,
                     sql=sql,
-                    error=result.error,
+                    error=original_error,
                     schema=state["schema_context"],
+                    kb_patterns_section=kb_fix_patterns,
                 ),
                 response_model=SQLFix,
             )
@@ -144,10 +160,11 @@ def plan_and_execute(state: AgentState, conn: "DatabaseConnection") -> dict[str,
 
             new_pitfalls.append(Pitfall(
                 original_sql=sql,
-                error=result.error,
+                error=original_error,
                 fixed_sql=fix.fixed_sql,
                 fix_explanation=fix.fix_explanation,
                 data_quality_issue=fix.data_quality_issue,
+                retry_error=retry.error or None,
             ))
 
             result = _attach_stats(retry)
@@ -228,7 +245,44 @@ def score_evidence(state: AgentState) -> dict[str, Any]:
 # ── Node: synthesize_report ───────────────────────────────────────────────────
 
 def synthesize_report(state: AgentState) -> dict[str, Any]:
+    query_history = state.get("query_history", [])
     pitfalls = state.get("pitfalls", [])
+
+    # ── Direct mode: all queries failed — skip narrator, return factual error report ──
+    if state.get("query_mode") == "direct" and query_history and all(r.error for r in query_history):
+        pitfall_by_original = {p.original_sql: p for p in pitfalls}
+        pitfall_by_fixed = {p.fixed_sql: p for p in pitfalls}
+        dq_notes: list[DataQualityNote] = []
+        for r in query_history[:3]:
+            p = pitfall_by_fixed.get(r.sql) or pitfall_by_original.get(r.sql)
+            if p:
+                was_retried = p.retry_error is not None
+                issue = (
+                    f"Auto-correction attempted but retry also failed.\n"
+                    f"Original error: {p.error}\n"
+                    f"Retry error: {p.retry_error}"
+                ) if was_retried else f"Auto-correction succeeded but a different error occurred: {r.error}"
+                fix_hint = p.fix_explanation
+            else:
+                issue = r.error
+                fix_hint = "Review the query and retry the question."
+            dq_notes.append(DataQualityNote(
+                table="SQL Execution",
+                column=None,
+                issue=issue,
+                impact="No results were retrieved. The question cannot be answered until this is resolved.",
+                recommended_fix=fix_hint,
+            ))
+        return {"report": AnalysisReport(
+            headline="Query execution failed",
+            verdict="",
+            key_findings=[],
+            what_is_not_the_cause=[],
+            data_quality_notes=dq_notes,
+            risks=[],
+            recommended_actions=["Try rephrasing the question, or check that the referenced tables and columns exist in the schema."],
+        )}
+
     human_feedback = state.get("human_feedback") or ""
     feedback_section = (
         f"\nANALYST FEEDBACK (incorporate this before finalising the report):\n{human_feedback}\n"
