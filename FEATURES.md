@@ -24,6 +24,9 @@
 15. [Frontend — Streaming Investigation UI](#15-frontend--streaming-investigation-ui)
 16. [Connection Manager](#16-connection-manager)
 17. [Direct Query Mode](#17-direct-query-mode)
+18. [Thinking Trace](#18-thinking-trace)
+19. [KPI Highlight](#19-kpi-highlight)
+20. [Auto-Charting — Observable Plot](#20-auto-charting--observable-plot)
 
 ---
 
@@ -577,6 +580,90 @@ The classifier result is emitted as a `{ type: "mode", query_mode }` SSE event i
 
 ---
 
+## 18. Thinking Trace
+
+### What
+A live visual progress stepper in the left panel that replaces the plain numbered text log. Each stage of an investigation is shown as a timeline step with a pulsing dot while running and a verdict-coloured dot on completion — so the user can see exactly where the agent is, which hypothesis it's testing, and what it concluded, all in real time.
+
+### Why
+The text log was functional but opaque — a stream of `"H2: ran 3 queries"` lines that required mental effort to parse. The Thinking Trace makes the agent's reasoning legible at a glance: you can see at a line scan that H1 confirmed, H2 refuted, H3 is currently running. This is critical for building user trust and for demo scenarios where a non-technical audience is watching.
+
+### How
+`ThinkingTrace.tsx` derives all steps from the existing `InvestigationState` — no new state fields were added. Step derivation logic:
+
+**Investigate mode:** Route (direct/investigate) → Decompose (N hypotheses formed) → one step per hypothesis (verdict + confidence % once scored) → Synthesize (report)
+
+**Direct mode:** Route (Direct Query) → Query executed (N queries) → Summarizing
+
+Each step has three visual states:
+- **Pending** — hollow circle, dimmed label
+- **Running** — pulsing amber dot (CSS `animate-ping`), amber label
+- **Done** — solid dot (emerald for confirmed/route/decompose/synthesize; red for refuted; amber for inconclusive), normal label + sublabel
+
+### Component interactions
+- Replaces the `state.log` text log in `page.tsx` — rendered inside a `<ScrollArea>` in the left panel
+- Reads `state.queryMode`, `state.hypotheses` (with live verdicts), `state.queriesExecuted`, `state.status`
+- Steps update reactively as SSE events are dispatched — no additional wiring needed
+
+### Tech / libraries
+- Pure React + Tailwind — no new dependencies
+- Derives steps at render time (not stored in reducer) — zero state overhead
+
+---
+
+## 19. KPI Highlight
+
+### What
+When a direct query returns a single-row result — a scalar answer like "What is our MRR?" or "How many active subscriptions?" — the numeric values are surfaced as large, centred metric cards above the results table. Values are auto-formatted: `1.24M`, `45.3k`, `3.14`, or `1,234`.
+
+### Why
+A single-row table is the worst way to display a scalar answer. `| mrr | 1234567.89 |` is harder to read than a card showing `1.24M · mrr`. This bridges the gap between a raw query result and a dashboard-style answer — the kind of thing a user would screenshot and share in Slack.
+
+### How
+`KPIHighlight` is a sub-component of `ReportView`. It runs when `queryMode === "direct"` and the first successful query has exactly one row. It filters to numeric columns (excluding ID-like columns), formats the value, and renders 1–3 cards in a responsive grid.
+
+Format rules: ≥1M → `{n}M` (2dp); ≥1k → `{n}k` (1dp); decimal → 2dp; integer → locale string with commas.
+
+### Component interactions
+- Rendered in `ReportView` above `DirectResultTable`, below the Verdict card
+- Only appears for direct mode single-row results — invisible in all other cases
+- No separate component file — inline function in `ReportView.tsx`
+
+### Tech / libraries
+- Pure Tailwind — no Tremor or charting library needed
+
+---
+
+## 20. Auto-Charting — Observable Plot
+
+### What
+When a direct query result contains a time column + numeric column, Aughor automatically renders a line/area chart. When it contains a categorical column + numeric column, it renders a horizontal ranked bar chart. Chart type is inferred from column names and sample values — no user configuration required.
+
+### Why
+The most common direct queries return either trend data ("MRR by month") or ranked breakdowns ("revenue by customer"). Both are significantly more readable as charts than as tables. Auto-detection means the right chart appears automatically — the user doesn't need to choose a chart type or configure axes.
+
+### How
+`InvestigationChart.tsx` runs a two-pass detection:
+1. **Column classification** — scans column names with `DATE_PATTERN` regex for date columns; checks first 10 rows for numeric parsability; flags categorical columns by string type
+2. **Chart type selection** — date + numeric → time series; categorical + numeric → bar; otherwise → `null` (no chart rendered)
+
+**Time series:** `Plot.lineY` + `Plot.areaY` (emerald, 8% opacity fill) + `Plot.dotY` markers. Dates are parsed with `new Date()` and formatted as `"Mon DD"`. Y-axis auto-formatted with M/k suffixes.
+
+**Bar chart:** `Plot.barX` sorted descending, top 20 rows, horizontal layout. Label column on Y axis, value on X.
+
+Both charts use a transparent background to sit cleanly on the dark zinc surface. The chart renders via `useEffect` → `Plot.plot()` → `container.append(plot)` pattern — fully browser-safe, no SSR issues.
+
+### Component interactions
+- Rendered in `ReportView` below `DirectResultTable` in direct mode
+- Receives `columns` and `rows` from `QueryCitation` (both now included in the `report` SSE event and history API response)
+- Returns `null` silently when data is not chartable — no empty chart frames or error states shown
+
+### Tech / libraries
+- **`@observablehq/plot ^0.6.17`** — D3-based declarative charting; purpose-built for statistical/analytical charts
+- `useEffect` append pattern for browser-safe rendering in Next.js App Router
+
+---
+
 ## How features connect — end-to-end data flow
 
 ```
@@ -639,4 +726,4 @@ Cache check (Prior Investigations RAG)
 
 ---
 
-*Last updated: 2026-05-15 · 17 features. See `ROADMAP.md` for upcoming features.*
+*Last updated: 2026-05-15 · 20 features. See `ROADMAP.md` for upcoming features.*

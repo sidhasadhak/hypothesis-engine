@@ -15,10 +15,14 @@
 | SQL self-correction | `hermes/agent/nodes.py`, `prompts.py` | FIX_SQL_PROMPT → retry; pitfalls injected into all subsequent plans |
 | Statistical engine | `hermes/tools/stats.py` | STL decomposition, z-score anomaly, Mann-Whitney; auto-attached to every QueryResult |
 | FastAPI SSE streaming | `hermes/api.py` | node-level events; frontend consumes with `useInvestigation` reducer |
-| Next.js frontend | `web/` | Hypothesis cards, activity log, report view, connection manager |
+| Next.js frontend | `web/` | Hypothesis cards, report view, connection manager, history |
 | Investigation history + citation pinning | `hermes/db/history.py`, `web/components/HistoryPanel.tsx`, `ReportView.tsx` | SQLite history store; Finding.hypothesis_id links claims → SQL; expandable footnotes in report |
 | Semantic Layer 1a — Business Glossary | `hermes/semantic/glossary.py`, `data/glossary.yaml` | YAML glossary injected into every schema context; table descriptions, grain, column definitions, known values, caveats, join hints; `GET/PUT /glossary` API |
 | Semantic Layer 1a+ — Auto-Seed Glossary | `hermes/semantic/autoseed.py` | LLM auto-infers descriptions for unannotated tables on first `get_schema()` call; written back with `auto_generated: true`; idempotent (YAML cache); disable via `HERMES_AUTOSEED=false` |
+| Direct Query Mode (2e) | `hermes/agent/nodes.py`, `graph.py`, `web/` | `route_question` entry node classifies direct vs investigate; direct skips decompose; Observable Plot chart + KPI cards in report |
+| Thinking Trace (8a) | `web/components/ThinkingTrace.tsx` | Visual progress stepper derived from state; pending/running/done dots; hypothesis verdict colours live |
+| KPI Highlight (8b) | `web/components/ReportView.tsx` | Auto-formats single-row scalar results as metric cards; no Tremor dep needed |
+| Observable Plot Charts (8c) | `web/components/InvestigationChart.tsx` | Auto-detects timeseries or bar chart from column names + values; @observablehq/plot |
 
 ---
 
@@ -428,49 +432,37 @@ opentelemetry-exporter-otlp>=1.24.0
 
 ---
 
-## Milestone 8 — Frontend Charts & UX
+## Milestone 8 — Frontend Charts & UX ✅
 **Goal:** Upgrade the frontend from a text-based evidence browser to a data product with proper charts, KPI cards, and a live thinking trace.
 
-### Phase 8a — Thinking Trace (Collapsible)
-**What:** A collapsible panel that shows LangGraph node transitions streamed live — "Testing hypothesis: APAC payment gateway…", "Query 4 of 6 complete…". Currently the activity log is text-only. This renders it as a visual progress stepper.
+### Phase 8a — Thinking Trace ✅
+**What:** Visual progress stepper that replaces the plain text activity log. Shows each LangGraph stage live with a pulsing dot while running and verdict-coloured completion dots.
 
-**Files to create/modify:**
-- `web/components/ThinkingTrace.tsx` — collapsible stepper; each step is a LangGraph node event with status (pending / running / done)
-- `web/lib/useInvestigation.ts` — extend reducer to track per-node status
-- `web/app/page.tsx` — replace plain activity log with `ThinkingTrace`
+**Shipped:**
+- `web/components/ThinkingTrace.tsx` — steps derived entirely from existing `InvestigationState` (no new state fields); investigate path shows Route → Decompose → H1…HN (verdict + %) → Synthesize; direct path shows Route → Query → Summarize
+- `web/app/page.tsx` — replaced activity log `<ScrollArea>` with `<ThinkingTrace state={state} />`; removed now-unused `logEndRef` and `useEffect`
 
-**New deps:** none (shadcn/ui primitives already available)
-
----
-
-### Phase 8b — Tremor KPI Cards
-**What:** Add **Tremor** for KPI summary cards and metric sparklines on the investigation report — visual summary of the key metric before and after the anomaly period.
-
-**Files to create/modify:**
-- `web/components/KPICard.tsx` — Tremor `Card` + `Metric` + `SparkAreaChart`; driven by query results from the confirmed hypothesis
-- `web/components/ReportView.tsx` — add KPI card row above the findings table when metric data is available
-
-**New deps:**
-```
-@tremor/react      # KPI cards, sparklines, badges (Tailwind-based)
-```
+**New deps:** none
 
 ---
 
-### Phase 8c — Observable Plot Charts
-**What:** Add **Observable Plot** (D3-based, declarative) for the investigative charts in the report — time series with the anomaly period highlighted, distribution comparison between segments.
+### Phase 8b — KPI Highlight ✅
+**What:** Single-row query results (scalar answers like "What is our MRR?") are surfaced as prominent metric cards above the results table — auto-formatted as `1.24M`, `45.3k`, or `3.14`.
 
-**Why Observable Plot over Recharts/Victory:** Purpose-built for the kinds of charts data investigations produce (time series, distributions, ranked bars). Declarative API, handles edge cases (sparse data, dual axes) better than general-purpose chart libs.
+**Shipped:**
+- `KPIHighlight` sub-component inside `web/components/ReportView.tsx` — renders 1–3 numeric columns as centred metric cards; skips multi-row results and non-numeric columns automatically; no Tremor dependency needed
 
-**Files to create/modify:**
-- `web/components/InvestigationChart.tsx` — renders Observable Plot mark specs passed from query results; supports `line`, `bar`, `area`, `dot` mark types
-- `web/components/ReportView.tsx` — render chart when query result has a time column + numeric column
-- `web/lib/types.ts` — add `chart_hint: "timeseries" | "distribution" | "comparison" | null` to `QueryCitation`
+**Note:** Implemented without `@tremor/react` — same visual outcome with shadcn/Tailwind primitives, zero extra bundle weight.
 
-**New deps:**
-```
-@observablehq/plot   # D3-based declarative charting
-```
+---
+
+### Phase 8c — Observable Plot Charts ✅
+**What:** Auto-charting for direct query results. Detects whether the result has a time + numeric column (line/area chart) or categorical + numeric column (ranked bar chart) and renders accordingly using Observable Plot.
+
+**Shipped:**
+- `web/components/InvestigationChart.tsx` — column-type detection via name heuristics + sample value inspection; time series: emerald line + area fill; bar: horizontal ranked bars top-20; renders `null` if data isn't chartable — no empty frames
+- `web/components/ReportView.tsx` — `<InvestigationChart>` rendered below the direct results table
+- `@observablehq/plot ^0.6.17` installed; renders via `useEffect` append pattern (browser-safe, SSR-compatible)
 
 ---
 
@@ -565,6 +557,6 @@ Evals (9)  ←  needs History ✅ + Two-Model Arch (2a)
 
 ## Current focus
 
-**Next:** Milestone 2d — Events Calendar Tool, or 2e — Direct Query Mode  
-**After that:** Milestone 8 (Frontend Charts)  
+**Shipped:** M1 (Semantic Layer), M2a–2c + 2e (Agent hardening, HITL, Direct Query), M8 (Frontend Charts)  
+**Next:** Milestone 2d — Events Calendar Tool · or · Milestone 5 — LLM Provider Switcher (Anthropic/Claude backend)  
 **Deferred:** Security (M6) before any multi-tenant deployment
