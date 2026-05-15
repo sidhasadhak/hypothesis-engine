@@ -27,6 +27,9 @@
 18. [Thinking Trace](#18-thinking-trace)
 19. [KPI Highlight](#19-kpi-highlight)
 20. [Auto-Charting — Observable Plot](#20-auto-charting--observable-plot)
+21. [SQL Knowledge Base](#21-sql-knowledge-base)
+22. [Direct Query Graceful Failure](#22-direct-query-graceful-failure)
+23. [Report UX — Smart Formatting & Collapsible Sections](#23-report-ux--smart-formatting--collapsible-sections)
 
 ---
 
@@ -563,15 +566,25 @@ For `direct` mode:
 3. After one SQL pass + scoring, the graph moves to `synthesize` — one full loop iteration
 4. The `synthesize_report` node produces a report with a short-form verdict and summary
 
-The classifier result is emitted as a `{ type: "mode", query_mode }` SSE event immediately after `route_question` runs, so the frontend can adapt its UI before any queries execute.
+The classifier result is emitted as a `{ type: "mode", query_mode, route_reasoning, route_confidence }` SSE event immediately after `route_question` runs, so the frontend can adapt its UI before any queries execute.
+
+**Routing v2 (current):** The classifier was upgraded from keyword-matching to intent-based reasoning:
+- *Retrieval intent* (can a single SQL pass answer this?) → `direct`
+- *Diagnosis intent* (why did X happen? what is causing Y?) → `investigate`
+- `RouteDecision` carries a `confidence: float` field (0–1). Confidence < 0.65 forces `investigate` regardless of classification — borderline questions default to the more thorough path
+- `route_reasoning` is stored in `AgentState` and surfaced in the `ThinkingTrace` step sublabel alongside a confidence percentage badge
+- 8 borderline few-shot examples in `ROUTE_QUESTION_PROMPT` cover ambiguous cases that previously misrouted
+
+**Direct mode cache behaviour:** Direct queries bypass the semantic investigation cache entirely (`_looks_direct()` pre-filter in `api.py`) and are never indexed into Qdrant on completion (`skip_index=True`). This prevents stale cached results when underlying data has changed.
 
 ### Component interactions
-- `hermes/agent/state.py` — `RouteDecision` Pydantic model (`mode`, `reasoning`); `query_mode: Optional[Literal["direct", "investigate"]]` added to `AgentState`
-- `hermes/agent/prompts.py` — `ROUTE_QUESTION_PROMPT` with concrete direct/investigate examples
-- `hermes/agent/nodes.py` — `route_question()` node; `route_after_classify()` router function
+- `hermes/agent/state.py` — `RouteDecision` Pydantic model (`mode`, `confidence`, `reasoning`); `query_mode`, `route_reasoning`, `route_confidence` fields added to `AgentState`
+- `hermes/agent/prompts.py` — `ROUTE_QUESTION_PROMPT` with intent framing, confidence guidance, 8 borderline examples
+- `hermes/agent/nodes.py` — `route_question()` stores reasoning + confidence; confidence < 0.65 overrides mode to `investigate`
 - `hermes/agent/graph.py` — `route_question` set as entry point; `add_conditional_edges` to `decompose` or `plan_and_execute`
-- `hermes/api.py` — emits `mode` SSE event; includes `query_mode` in the `report` event; passes `columns`/`rows` (up to 50) in `query_history` so the frontend can render the results table
-- **Frontend:** `mode` event sets `queryMode` in state; `ReportView` shows raw data table + "Short Summary" label; hypothesis cards and "Hypotheses" counter hidden in direct mode; `HistoryDetailPanel` detects direct mode via `hypothesis.id === "direct"` and suppresses the hypothesis section
+- `hermes/api.py` — `_looks_direct()` regex pre-filter gates cache lookup; emits `mode` SSE event with reasoning + confidence; `complete_investigation(skip_index=True)` for direct mode
+- `hermes/db/history.py` — `complete_investigation(skip_index: bool = False)` — skips Qdrant indexing when True
+- **Frontend:** `mode` event sets `queryMode`, `routeReasoning`, `routeConfidence` in state; ThinkingTrace shows reasoning + `· NN% confidence` sublabel; `ReportView` shows raw data table + "Executive Summary" label; hypothesis cards hidden in direct mode
 
 ### Tech / libraries
 - **LangGraph conditional edges** — `route_question` → `decompose` | `plan_and_execute`
@@ -649,18 +662,132 @@ The most common direct queries return either trend data ("MRR by month") or rank
 
 **Time series:** `Plot.lineY` + `Plot.areaY` (emerald, 8% opacity fill) + `Plot.dotY` markers. Dates are parsed with `new Date()` and formatted as `"Mon DD"`. Y-axis auto-formatted with M/k suffixes.
 
-**Bar chart:** `Plot.barX` sorted descending, top 20 rows, horizontal layout. Label column on Y axis, value on X.
+**Bar chart (v2):** `Plot.barX` horizontal layout, per-category aggregation, top 15. Label column on Y axis, value on X. Value column is selected intelligently — a `SHARE_PATTERN` match (`share|pct|percent|rate|ratio|proportion`) is preferred over other numeric columns. Data is aggregated per category using **average** for share columns and **sum** for count/amount columns — prevents the nonsensical 140% result from summing fractional shares across many time periods.
 
 Both charts use a transparent background to sit cleanly on the dark zinc surface. The chart renders via `useEffect` → `Plot.plot()` → `container.append(plot)` pattern — fully browser-safe, no SSR issues.
 
+**Column detection improvements (v2):**
+- `DATE_PATTERN` restricted to `/_date$|_at$|_time$|created_at|updated_at|timestamp/i` — no longer misidentifies `order_year` or `order_month` (integer columns) as date axes
+- `SHARE_PATTERN` column auto-detects 0–1 fractional values and formats X-axis ticks as percentages (`18.5%` not `0.185`)
+- `isPercentageColumn()` checks both the column name and whether all sample values are in [0, 1]
+
 ### Component interactions
-- Rendered in `ReportView` below `DirectResultTable` in direct mode
-- Receives `columns` and `rows` from `QueryCitation` (both now included in the `report` SSE event and history API response)
+- Rendered in `ReportView` above the KPI cards and below Executive Summary in direct mode (section order: Headline → Exec Summary → Chart → KPI → Table)
+- Receives `columns` and `rows` from `QueryCitation` (both included in `report` SSE event and history API response)
 - Returns `null` silently when data is not chartable — no empty chart frames or error states shown
 
 ### Tech / libraries
 - **`@observablehq/plot ^0.6.17`** — D3-based declarative charting; purpose-built for statistical/analytical charts
 - `useEffect` append pattern for browser-safe rendering in Next.js App Router
+
+---
+
+## 21. SQL Knowledge Base
+
+### What
+A curated library of 235 SQL patterns embedded in Qdrant and retrieved at query-planning time. The agent looks up relevant patterns before writing SQL — avoiding known dialect traps, applying domain-correct metric definitions, and learning from example good/bad query pairs.
+
+### Why
+Even a capable coder model makes systematic SQL errors: wrong date arithmetic for the target dialect, incorrect NULL handling in aggregates, or misunderstood business metrics (e.g. using `order_date` instead of `approved_date` for revenue recognition). The KB encodes these traps once and injects them into every relevant prompt — making the corrections automatic rather than reactive.
+
+### How
+`hermes/semantic/kb_loader.py` loads 235 JSON pattern files from the KB directory. Two tiers:
+
+| Tier | Content | When injected |
+|---|---|---|
+| **Tier 1 — SQL correctness** | Dialect traps, good_sql/bad_sql pairs, common mistake patterns | `FIX_SQL_PROMPT`, `PLAN_QUERIES_PROMPT` |
+| **Tier 2 — Domain knowledge** | Business metric definitions, causal relationships, diagnostic questions | `DECOMPOSE_PROMPT`, `PLAN_QUERIES_PROMPT` |
+
+Each entry is embedded via `nomic-embed-text` into Qdrant collection `sql_knowledge_base`. At runtime, three retrieval functions query the collection:
+- `retrieve_for_fix_sql(error, sql)` — top-2 dialect traps matching the SQL error; injected into FIX_SQL to guide the correction
+- `retrieve_for_planning(hypothesis)` — top-3 SQL patterns + domain knowledge for the current hypothesis; injected into PLAN_QUERIES
+- `retrieve_for_decompose(question)` — top-2 Tier 2 domain entries; injected into DECOMPOSE to inform hypothesis generation
+
+All retrieval functions fail silently (`""` on any error) — the KB is additive, not load-bearing.
+
+### Component interactions
+- `hermes/semantic/kb_loader.py` — `KBEntry` dataclass; `load_kb_entries(kb_path)` → 235 entries; `_detect_tier()` and `_build_embed_text()` internal helpers
+- `hermes/semantic/kb_retriever.py` — `build_kb_index()` for one-time indexing; three `retrieve_for_*` functions called from `nodes.py`
+- `hermes/agent/nodes.py` — calls each retrieve function at the right moment; injects `kb_patterns_section` and `kb_domain_section` into prompts
+- `hermes/agent/prompts.py` — `{kb_patterns_section}` placeholder in `PLAN_QUERIES_PROMPT` and `FIX_SQL_PROMPT`; `{kb_domain_section}` in `DECOMPOSE_PROMPT`
+- Shares the Qdrant instance and `nomic-embed-text` embedder with schema search and prior analyses RAG, in a separate `sql_knowledge_base` collection
+
+### Tech / libraries
+- **Qdrant** — same self-hosted instance as schema search and prior analyses
+- **nomic-embed-text** — same embedding model, batch size 64
+- Tier-specific payload fields enable filtered retrieval (e.g. `retrieve_for_decompose` filters to tier 2 only)
+
+---
+
+## 22. Direct Query Graceful Failure
+
+### What
+When a direct query fails (SQL error that self-correction cannot fix), Aughor returns a clean, factual error report immediately — without calling the narrator LLM or producing a confusing "investigation" narrative around a failure.
+
+### Why
+Without this, a failed direct query would fall through to `synthesize_report`, which would try to narrate around zero successful results — producing either a hallucinated "no data found" narrative or a confusing empty report with no explanation of what went wrong. The graceful failure path surfaces the actual SQL error clearly and tells the user what was tried.
+
+### How
+`synthesize_report` checks two conditions before calling the LLM:
+1. `state.get("query_mode") == "direct"`
+2. All entries in `query_history` have non-null `.error`
+
+If both are true, it skips the narrator LLM entirely and constructs an `AnalysisReport` directly:
+- `headline = "Query execution failed"`
+- `verdict = ""` (empty — used as the failure signal in `ReportView`)
+- `data_quality_notes` populated with one `DataQualityNote` per failed query, including the original SQL, error message, and suggested fix from the pitfall log
+
+The frontend detects this state via `isQueryFailure = isDirect && !report.verdict && report.headline === "Query execution failed"` and renders a red headline card with "Query Failed" label, "Execution Error" collapsible section, and a description of what was retried.
+
+### Component interactions
+- `hermes/agent/nodes.py` — early-exit block at top of `synthesize_report`
+- `hermes/agent/state.py` — `Pitfall.retry_error` field captures the post-fix error for failure reporting
+- `web/components/ReportView.tsx` — `isQueryFailure` flag drives red styling, label swap, and "Execution Error" section
+
+### Tech / libraries
+- No new infrastructure — reuses `AnalysisReport`, `DataQualityNote`, and existing `ReportView` rendering
+
+---
+
+## 23. Report UX — Smart Formatting & Collapsible Sections
+
+### What
+Three complementary improvements to how report results are presented in the UI: a smart number formatter, collapsible secondary sections, and a restructured section order that puts the most important content first.
+
+### Why
+Raw query results from a business database frequently contain fractional values like `0.18518...` for a column called `category_share` — which a business user reads as nonsense until they recognise it's a proportion. Similarly, secondary sections like Risks and Excluded Causes are often not what a user wants to read first, yet they previously appeared above the chart and data table. And long secondary content (5+ risks, 4+ recommendations) cluttered the report for the many cases where the user just wants the headline answer.
+
+### How
+
+**Smart number formatter (`formatCell`):**
+- Columns matching `SHARE_COL_PATTERN` (`share|pct|percent|rate|ratio|proportion`) with values in [0, 1] → rendered as `XX.XX%` (e.g. `18.52%`)
+- Columns matching `ORDINAL_COL_PATTERN` (`year|month|day|week|rank|_id|^id$`) → rendered as bare integers, no locale comma (`2016` not `2,016`)
+- Other decimals → 2 decimal places
+- Other integers → locale string with thousands separator
+
+**Section order:**
+1. Headline (Top Insight / Verdict)
+2. Executive Summary (was below chart/table — now immediately below headline)
+3. Chart (auto-rendered when data is chartable)
+4. KPI cards (scalar single-row results)
+5. Query Results table
+6. ─ separator ─
+7. Supportive Evidences (investigate mode only)
+8. Data Quality Issues ▾ (collapsible)
+9. Risks & Considerations ▾ (collapsible)
+10. Recommended Actions ▾ (collapsible)
+11. Excluded Causes ▾ (collapsible)
+
+**CollapsibleSection component:** A minimal toggle with an up/down chevron (`▲`/`▼`). Default state is collapsed. Title is clickable as a full-width button. Badge slot for count indicators (e.g. DQ Issues badge).
+
+### Component interactions
+- `formatCell(col, val)` — called in `DirectResultTable` cell renderer; replaces the previous `String(cell)` fallback
+- `CollapsibleSection` — wraps DQ notes, risks, recommended actions, excluded causes; each manages its own `useState(false)` open state
+- KPI formatter (`fmt`) also updated to use `SHARE_COL_PATTERN` check for percentage KPI cards
+
+### Tech / libraries
+- Pure React `useState` — no animation library
+- Regex constants (`SHARE_COL_PATTERN`, `ORDINAL_COL_PATTERN`) at module scope for reuse across `formatCell` and `KPIHighlight`
 
 ---
 
@@ -670,14 +797,15 @@ Both charts use a transparent background to sit cleanly on the dark zinc surface
 User question
     │
     ▼
-Cache check (Prior Investigations RAG)
+Cache check (Prior Investigations RAG)          [skipped for direct-signal questions]
     ├─ hit (score ≥ 0.80) ─────────────────────────────────► SSE: report (cached) ⚡
     │
     └─ miss ──► create_investigation(history.db)
                     │
                     ▼
-              route_question                           SSE: mode
+              route_question                           SSE: mode + reasoning + confidence%
                 ├─ LLM classifier → "direct" | "investigate"
+                ├─ confidence < 0.65 → force "investigate"
                 │
                 ├─ direct ──────────────────────────────────────────────┐
                 │   (seeds synthetic hypothesis, skips decompose)        │
@@ -696,9 +824,12 @@ Cache check (Prior Investigations RAG)
                             ▼ (×N hypotheses)  ◄─────────────────────── ┘
                       plan_and_execute
                         ├─ retrieve_relevant_schema (Qdrant, if >12 tables)
+                        ├─ retrieve_for_planning (SQL KB — Tier 1+2 patterns)
                         ├─ LLM → QueryPlan (coder model)
                         ├─ DatabaseConnection.execute → QueryResult
-                        ├─ SQL self-correction on error → Pitfall logged
+                        ├─ SQL self-correction on error
+                        │     ├─ retrieve_for_fix_sql (SQL KB — dialect traps)
+                        │     └─ Pitfall logged (retry_error captured)
                         └─ attach_stats → STL / z-score / Mann-Whitney
                             │
                             ▼
@@ -710,7 +841,8 @@ Cache check (Prior Investigations RAG)
                    paused        continue
                       │              │
                  FeedbackPrompt    synthesize_report
-                 (user input)       └─ LLM → AnalysisReport (narrator model)
+                 (user input)       ├─ [direct + all failed] → factual error report (no LLM)
+                                    └─ LLM → AnalysisReport (narrator model)
                       │                        │
                       └────────────────────────┘
                                                │
@@ -726,4 +858,4 @@ Cache check (Prior Investigations RAG)
 
 ---
 
-*Last updated: 2026-05-15 · 20 features. See `ROADMAP.md` for upcoming features.*
+*Last updated: 2026-05-15 · 23 features. See `ROADMAP.md` for upcoming features.*

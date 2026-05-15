@@ -20,9 +20,15 @@
 | Semantic Layer 1a — Business Glossary | `hermes/semantic/glossary.py`, `data/glossary.yaml` | YAML glossary injected into every schema context; table descriptions, grain, column definitions, known values, caveats, join hints; `GET/PUT /glossary` API |
 | Semantic Layer 1a+ — Auto-Seed Glossary | `hermes/semantic/autoseed.py` | LLM auto-infers descriptions for unannotated tables on first `get_schema()` call; written back with `auto_generated: true`; idempotent (YAML cache); disable via `HERMES_AUTOSEED=false` |
 | Direct Query Mode (2e) | `hermes/agent/nodes.py`, `graph.py`, `web/` | `route_question` entry node classifies direct vs investigate; direct skips decompose; Observable Plot chart + KPI cards in report |
+| SQL Knowledge Base (2f) | `hermes/semantic/kb_loader.py`, `kb_retriever.py` | 235 SQL patterns and domain knowledge JSONs embedded in Qdrant; injected into PLAN_QUERIES, FIX_SQL, and DECOMPOSE prompts; two tiers: SQL correctness patterns (dialect traps + mistake examples) and domain business knowledge (metrics, causal relationships, diagnostic questions) |
 | Thinking Trace (8a) | `web/components/ThinkingTrace.tsx` | Visual progress stepper derived from state; pending/running/done dots; hypothesis verdict colours live |
 | KPI Highlight (8b) | `web/components/ReportView.tsx` | Auto-formats single-row scalar results as metric cards; no Tremor dep needed |
 | Observable Plot Charts (8c) | `web/components/InvestigationChart.tsx` | Auto-detects timeseries or bar chart from column names + values; @observablehq/plot |
+| Routing Classifier v2 (2g) | `hermes/agent/prompts.py`, `nodes.py`, `state.py` | Intent-based routing (retrieval vs diagnosis); confidence scoring; < 0.65 → investigate fallback; reasoning + confidence % surfaced in ThinkingTrace; direct mode bypasses semantic cache and skips Qdrant indexing |
+| SQL Knowledge Base (2f) | `hermes/semantic/kb_loader.py`, `kb_retriever.py` | 235 SQL patterns and domain knowledge JSONs embedded in Qdrant; Tier 1: dialect traps + good/bad SQL examples; Tier 2: domain business knowledge (metrics, causal chains, diagnostic questions); injected into PLAN_QUERIES, FIX_SQL, and DECOMPOSE prompts via retrieve_for_* functions |
+| Direct Query Graceful Failure | `hermes/agent/nodes.py`, `hermes/api.py` | synthesize_report early-exits without an LLM call when all queries fail in direct mode; returns factual AnalysisReport with SQL errors as DataQualityNotes; dedicated frontend error state (red headline, Execution Error label) |
+| Chart Intelligence (8d) | `web/components/InvestigationChart.tsx` | DATE_PATTERN restricted to genuine date columns only (no false-positives on order_year/order_month); SHARE_PATTERN prefers share/pct/percent/rate/ratio columns as value axis; per-category averaging for share columns (not sum); percentage tick formatter for 0-1 range columns |
+| Report UX (8e) | `web/components/ReportView.tsx` | Section reorder: Headline → Executive Summary → Chart → KPI → Query Results → collapsibles; CollapsibleSection component wraps DQ Issues / Risks / Recommended Actions / Excluded Causes (all collapsed by default); smart formatCell: share 0-1 → XX.XX%, ordinal integers (year/month/id) → no locale comma, long decimals → 2 dp |
 
 ---
 
@@ -466,7 +472,37 @@ opentelemetry-exporter-otlp>=1.24.0
 
 ---
 
-## Milestone 9 — LLM Evals
+## Milestone 9 — Quick Chat Mode
+**Goal:** A conversational, no-frills mode for fast data retrieval. Ask in plain English, get a number or chart immediately — no verdict, no executive summary, no recommendations. Designed for power users who know what they want and need speed over narrative.
+
+**Why separate from Direct Query:** Direct Query mode still wraps results in the full report shell (Top Insight, Executive Summary, etc.). Quick Chat is stripped entirely — just the raw answer presented conversationally.
+
+**How it differs from Direct Query:**
+| | Direct Query | Quick Chat |
+|---|---|---|
+| Result format | Full report shell | Bare number / table / chart |
+| Narrative | Executive Summary + bullets | None |
+| Recommended actions | Yes | No |
+| Risks | Yes | No |
+| Turn-based | Single shot | Conversational (multi-turn) |
+| Entry point | `route_question` classifies | User explicitly selects chat mode |
+
+**Proposed UX:** A chat-style input panel (bottom text field, bubbles above) rather than the current left-panel + right-panel layout. Results appear inline as chat messages — a KPI card, a chart, or a mini table — without any surrounding report chrome.
+
+**Files to create/modify:**
+- `web/app/page.tsx` — Add "chat" as a third tab (or a mode toggle); render `<ChatPanel>` instead of the investigation layout
+- `web/components/ChatPanel.tsx` — Conversational turn list; renders `ChatMessage` per turn
+- `web/components/ChatMessage.tsx` — Renders a single answer: number, chart, or table depending on result shape; no report wrapper
+- `hermes/api.py` — New `POST /chat` endpoint; calls `plan_and_execute` directly (skips `route_question` and `decompose`); SSE streams a minimal result event with `columns`, `rows`, `sql`
+- `web/lib/useChat.ts` — Separate reducer from `useInvestigation`; maintains `turns: ChatTurn[]`; each turn has `question + result`
+
+**New deps:** none
+
+**Dependency on:** Direct Query Mode (2e) — reuses `plan_and_execute` node and result streaming
+
+---
+
+## Milestone 10 — LLM Evals
 **Goal:** Braintrust golden dataset; regression testing on agent verdict quality so model upgrades can be validated before deploying.
 
 **Target dataset:** 50 business questions with known correct root causes against the fixture DuckDB warehouse. Sourced from confirmed investigations in history.
@@ -557,6 +593,7 @@ Evals (9)  ←  needs History ✅ + Two-Model Arch (2a)
 
 ## Current focus
 
-**Shipped:** M1 (Semantic Layer), M2a–2c + 2e (Agent hardening, HITL, Direct Query), M8 (Frontend Charts)  
+**Shipped:** M1 (Semantic Layer), M2a–2c + 2e–2g (Agent hardening, HITL, Direct Query, Routing v2, SQL KB), M8 (Frontend Charts, Chart Intelligence, Report UX)  
 **Next:** Milestone 2d — Events Calendar Tool · or · Milestone 5 — LLM Provider Switcher (Anthropic/Claude backend)  
+**Planned:** Milestone 9 — Quick Chat Mode (conversational, number/chart only, no report shell)  
 **Deferred:** Security (M6) before any multi-tenant deployment
